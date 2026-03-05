@@ -1,6 +1,6 @@
 # Tensor
 
-Unified margin engine on Solana with Greeks-aware portfolio margining across perpetuals, options, spot, and lending.
+Unified margin engine with Greeks-aware portfolio margining across perpetuals, options, spot, and lending.
 
 ## Architecture
 
@@ -19,6 +19,19 @@ tensor/
     sdk                    TypeScript SDK
 ```
 
+### Chain-Agnostic Core
+
+The core algorithm crates (`tensor-types`, `tensor-math`, `tensor-intents`, `tensor-solver`) are chain-agnostic. Each has an `anchor` feature flag (enabled by default) that controls Anchor/Solana dependencies:
+
+| Crate | `anchor` feature ON (default) | `anchor` feature OFF |
+|-------|-------------------------------|----------------------|
+| tensor-types | `AnchorSerialize`/`AnchorDeserialize`/`InitSpace` derives, `Pubkey` fields | `borsh::BorshSerialize`/`BorshDeserialize` derives, `[u8; 32]` fields |
+| tensor-math | Depends on tensor-types with anchor | Pure math, no Anchor dependency |
+| tensor-intents | Depends on tensor-types with anchor | Pure intent DSL, no Anchor dependency |
+| tensor-solver | Depends on all above with anchor | Pure solver, no Anchor dependency |
+
+The Solana-specific crates (`tensor-cpi`, `tensor-margin`) always require Anchor.
+
 ## Key Features
 
 - **Portfolio Margining** — Delta-netting across spot, perps, and options reduces margin for hedged positions to near zero.
@@ -32,17 +45,41 @@ tensor/
 
 ## Building
 
+Build the Solana program (uses default `anchor` feature):
+
 ```sh
 anchor build
 ```
 
 ## Testing
 
+Run all tests (with Anchor/Solana features enabled by default):
+
 ```sh
 cargo test
 ```
 
 217 tests cover margin math, Greeks computation, delta-netting, liquidation waterfall, intent validation, solver optimization, credit discounts, and end-to-end trading scenarios.
+
+### Chain-Agnostic Build
+
+To verify the core crates compile without any Solana/Anchor dependency:
+
+```sh
+cargo check -p tensor-types -p tensor-math -p tensor-intents -p tensor-solver --no-default-features
+```
+
+### Using Core Crates Without Anchor
+
+Add the crate with default features disabled:
+
+```toml
+[dependencies]
+tensor-types = { git = "...", default-features = false }
+tensor-math = { git = "...", default-features = false }
+```
+
+Types use `borsh` serialization and `[u8; 32]` for address fields instead of `Pubkey`. All math, intent, and solver logic works identically.
 
 ## Program ID
 
