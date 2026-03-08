@@ -15,7 +15,7 @@ tensor/
     tensor-intents         Intent language — multi-leg bundles, builder pattern
     tensor-solver          Off-chain solver — decomposition, ordering, margin simulation
   packages/
-    core                   Core TypeScript type definitions
+    core                   Chain-agnostic TypeScript types, math & adapters
     sdk                    TypeScript SDK
     qn-addon               QuickNode Marketplace add-on (margin, greeks, intents)
 ```
@@ -89,6 +89,26 @@ tensor-math = { git = "...", default-features = false }
 ```
 
 Types use `borsh` serialization and `[u8; 32]` for address fields instead of `Pubkey`. All math, intent, and solver logic works identically.
+
+### TypeScript Chain Abstraction
+
+The `@tensor/core` package is fully chain-agnostic and defines:
+
+- **`Chain`** — `"solana" | "evm"` type union (consistent with `@sentinel/core` and `@accredit/core`)
+- **`ChainAdapter`** — Interface for reading on-chain state (positions, collateral, mark prices) and submitting intents
+- **`CostEstimator`** — Injectable execution cost estimator with built-in defaults for Solana (200k CU/step) and EVM (150k gas/step)
+
+The `solveIntent()` function accepts an optional `CostEstimator` parameter (defaults to Solana):
+
+```typescript
+import { solveIntent, evmCostEstimator } from "@tensor/core";
+
+// Solana (default)
+const result = solveIntent(intent, constraints);
+
+// EVM
+const result = solveIntent(intent, constraints, evmCostEstimator);
+```
 
 ## QuickNode Add-on
 
