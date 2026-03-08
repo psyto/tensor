@@ -244,7 +244,7 @@ describe("solveIntent", () => {
     const result = solveIntent(intent);
 
     // 3 steps * 200_000 = 600_000
-    expect(result.estimated_gas).toBe(600_000);
+    expect(result.estimated_cost).toBe(600_000);
   });
 
   it("sets sequence numbers starting at 1", () => {

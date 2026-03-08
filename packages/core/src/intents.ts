@@ -6,6 +6,8 @@ import type {
   SolverConstraints,
   SolverResult,
 } from "./types";
+import type { CostEstimator } from "./adapter";
+import { solanaCostEstimator } from "./adapter";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -30,9 +32,6 @@ const HIGH_SLIPPAGE_BPS = 500;
 
 /** Default margin weight for estimating margin impact */
 const DEFAULT_MARGIN_WEIGHT = 0.10;
-
-/** Gas estimate per execution step (lamports / compute units) */
-const GAS_PER_STEP = 200_000;
 
 /** Maximum legs that can be submitted atomically */
 const MAX_ATOMIC_LEGS = 4;
@@ -134,6 +133,7 @@ export function validateIntent(intent: TradingIntent): ValidationResult {
 export function solveIntent(
   intent: TradingIntent,
   constraints?: SolverConstraints,
+  costEstimator: CostEstimator = solanaCostEstimator,
 ): SolverResult {
   const preferAtomic = constraints?.prefer_atomic ?? true;
   const notes: string[] = [];
@@ -208,7 +208,7 @@ export function solveIntent(
     feasible,
     steps,
     total_steps: steps.length,
-    estimated_gas: steps.length * GAS_PER_STEP,
+    estimated_cost: costEstimator.estimateCost(steps.length),
     estimated_margin_required: estimatedMargin,
     optimization_notes: notes,
   };

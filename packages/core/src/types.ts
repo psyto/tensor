@@ -134,14 +134,16 @@ export interface ExecutionStep {
 export interface SolverConstraints {
   max_steps?: number;
   prefer_atomic?: boolean;
-  gas_budget?: number;
+  /** Execution budget in chain-native units (e.g. compute units on Solana, gas on EVM) */
+  execution_budget?: number;
 }
 
 export interface SolverResult {
   feasible: boolean;
   steps: ExecutionStep[];
   total_steps: number;
-  estimated_gas: number;
+  /** Estimated execution cost in chain-native units */
+  estimated_cost: number;
   estimated_margin_required: number;
   optimization_notes: string[];
 }
