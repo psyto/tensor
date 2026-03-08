@@ -1,0 +1,111 @@
+{
+  "name": "Fabrknt Margin Engine",
+  "slug": "fabrknt-margin-engine",
+  "description": "Greeks-aware portfolio margining engine with delta-netting, risk analytics, and multi-leg intent validation/solving for perpetuals, options, spot, and lending.",
+  "version": "0.1.0",
+  "author": "Fabrknt",
+  "category": "developer-tools",
+  "support": {
+    "email": "support@fabrknt.com",
+    "url": "https://fabrknt.com/support"
+  },
+  "repository": "https://github.com/psyto/tensor",
+  "chains": [
+    {
+      "id": "solana",
+      "name": "Solana"
+    },
+    {
+      "id": "ethereum",
+      "name": "Ethereum"
+    }
+  ],
+  "healthcheck": "/healthcheck",
+  "authentication": "basic",
+  "provisioning": {
+    "provision": "POST /provision",
+    "update": "PUT /update",
+    "deactivate": "DELETE /deactivate_endpoint",
+    "deprovision": "DELETE /deprovision"
+  },
+  "plans": [
+    {
+      "id": "starter",
+      "name": "Starter",
+      "price": 0,
+      "description": "Portfolio margining, Greeks computation, and delta-netting for up to 50 positions.",
+      "rate_limit": {
+        "requests_per_minute": 100
+      },
+      "features": [
+        "Portfolio margin calculation",
+        "Margin health monitoring",
+        "Delta-netting for hedged positions",
+        "Options Greeks computation (delta, gamma, vega, theta)",
+        "Portfolio-level Greeks aggregation",
+        "Intent validation (up to 4 legs)"
+      ]
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "price": 49,
+      "description": "All Starter features plus intent solving, unlimited positions, and priority support.",
+      "rate_limit": {
+        "requests_per_minute": 200
+      },
+      "features": [
+        "All Starter features",
+        "Intent solver (optimal execution sequencing)",
+        "Unlimited positions",
+        "Atomic multi-leg execution planning",
+        "Advanced delta-netting across correlated assets",
+        "Priority support"
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/margin/calculate",
+      "description": "Calculate margin requirements for a set of positions",
+      "plan": "starter"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/margin/health",
+      "description": "Check margin health (equity, maintenance margin, liquidation distance)",
+      "plan": "starter"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/margin/delta-net",
+      "description": "Calculate delta-netted margin for hedged positions",
+      "plan": "starter"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/greeks/compute",
+      "description": "Compute Greeks (delta, gamma, vega, theta) for options positions",
+      "plan": "starter"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/greeks/portfolio",
+      "description": "Aggregate portfolio Greeks across all positions",
+      "plan": "starter"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/intents/validate",
+      "description": "Validate a multi-leg trading intent",
+      "plan": "starter"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/intents/solve",
+      "description": "Decompose intent into optimal execution sequence",
+      "plan": "pro"
+    }
+  ]
+}
