@@ -41,6 +41,21 @@ export enum InvestorCategory {
   Institutional = 2,
 }
 
+export enum OptionKind {
+  Vanilla = 0,
+  Asian = 1,
+  BarrierKnockOut = 2,
+  BarrierKnockIn = 3,
+}
+
+export enum ZkCreditTier {
+  None = 0,
+  Bronze = 1,
+  Silver = 2,
+  Gold = 3,
+  Platinum = 4,
+}
+
 export enum IntentStatus {
   Pending = 0,
   PartiallyFilled = 1,
@@ -74,10 +89,13 @@ export interface OnChainSpotBalance {
 export interface OnChainOptionPosition {
   marketIndex: number;
   side: OptionSide;
+  kind: OptionKind;
   strike: bigint;
+  barrier: bigint;
   contracts: bigint;
   notionalPerContract: bigint;
   expiry: bigint;
+  premium: bigint;
   deltaPerContract: bigint;
   gammaPerContract: bigint;
   vegaPerContract: bigint;
@@ -131,6 +149,16 @@ export interface OnChainMarginAccount {
   health: AccountHealth;
   marginMode: MarginMode;
   investorCategory: InvestorCategory;
+  identity: PublicKey;
+  zkCreditScore: number;
+  zkCreditTier: ZkCreditTier;
+  zkScoreUpdatedAt: bigint;
+  zkCreditOracle: PublicKey;
+  activeIntentCount: number;
+  createdAt: bigint;
+  lastMarginUpdate: bigint;
+  totalTrades: bigint;
+  totalRealizedPnl: bigint;
   bump: number;
 }
 

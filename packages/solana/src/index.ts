@@ -12,8 +12,10 @@ export {
   MarginMode,
   ProductType,
   OptionSide,
+  OptionKind,
   LendingSide,
   InvestorCategory,
+  ZkCreditTier,
   IntentStatus,
   type OnChainPerpPosition,
   type OnChainSpotBalance,
@@ -23,6 +25,7 @@ export {
   type OnChainMarginAccount,
   type OnChainMarginMarket,
 } from "./accounts.js";
+export { decodeMarginAccount, decodeMarginMarket } from "./decoder.js";
 
 // Re-export core types
 export {

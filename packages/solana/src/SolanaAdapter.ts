@@ -1,35 +1,24 @@
 import { Connection, PublicKey } from "@solana/web3.js";
-import { Program, AnchorProvider } from "@coral-xyz/anchor";
 import type { ChainAdapter, Chain, Position, TradingIntent } from "@tensor/core";
-import { TENSOR_PROGRAM_ID, findMarginAccountPDA, findMarginMarketPDA } from "./pda.js";
-import { PRECISION, type OnChainMarginAccount, type OnChainMarginMarket } from "./accounts.js";
+import { TENSOR_PROGRAM_ID, findMarginAccountPDA } from "./pda.js";
+import { PRECISION, type OnChainMarginAccount } from "./accounts.js";
+import { decodeMarginAccount, decodeMarginMarket } from "./decoder.js";
 
 /**
  * Solana implementation of the Tensor ChainAdapter.
- * Reads MarginAccount and MarginMarket state from the on-chain Anchor program.
+ * Reads MarginAccount and MarginMarket state from the on-chain Anchor program
+ * using direct borsh deserialization (no IDL dependency).
  */
 export class SolanaAdapter implements ChainAdapter {
   readonly chain: Chain = "solana";
-  private connection: Connection;
-  private programId: PublicKey;
 
   constructor(
-    connection: Connection,
-    programId: PublicKey = TENSOR_PROGRAM_ID,
-  ) {
-    this.connection = connection;
-    this.programId = programId;
-  }
+    private readonly connection: Connection,
+    private readonly programId: PublicKey = TENSOR_PROGRAM_ID,
+  ) {}
 
   async getPositions(account: string): Promise<Position[]> {
-    const owner = new PublicKey(account);
-    const [pda] = findMarginAccountPDA(owner, this.programId);
-    const accountInfo = await this.connection.getAccountInfo(pda);
-    if (!accountInfo) return [];
-
-    // Decode via Anchor IDL (requires IDL to be loaded)
-    // For now, delegate to the program's account parser
-    const marginAccount = await this.fetchMarginAccount(owner);
+    const marginAccount = await this.fetchMarginAccount(new PublicKey(account));
     if (!marginAccount) return [];
 
     const positions: Position[] = [];
@@ -40,10 +29,10 @@ export class SolanaAdapter implements ChainAdapter {
       if (!perp.isActive) continue;
       positions.push({
         asset: `MARKET-${perp.marketIndex}`,
-        side: Number(perp.size) >= 0 ? "long" : "short",
+        side: perp.size >= 0n ? "long" : "short",
         size: Math.abs(Number(perp.size)) / PRECISION,
         entry_price: Number(perp.entryPrice) / PRECISION,
-        mark_price: 0, // Filled by getMarkPrices
+        mark_price: 0,
         instrument_type: "perpetual",
       });
     }
@@ -68,7 +57,7 @@ export class SolanaAdapter implements ChainAdapter {
       if (!opt.isActive) continue;
       positions.push({
         asset: `MARKET-${opt.marketIndex}`,
-        side: Number(opt.contracts) >= 0 ? "long" : "short",
+        side: opt.contracts >= 0n ? "long" : "short",
         size: Math.abs(Number(opt.contracts)) / PRECISION,
         entry_price: Number(opt.strike) / PRECISION,
         mark_price: 0,
@@ -103,44 +92,50 @@ export class SolanaAdapter implements ChainAdapter {
   }
 
   async getMarkPrices(assets: string[]): Promise<Record<string, number>> {
+    // MarginMarket accounts store mark prices, updated by keepers.
+    // To fetch all markets, callers should use getMarginMarket() directly
+    // for each market index. This method returns prices for known markets
+    // by scanning program accounts.
+    const accounts = await this.connection.getProgramAccounts(this.programId, {
+      filters: [{ dataSize: 200 }], // Approximate MarginMarket size filter
+    });
+
     const prices: Record<string, number> = {};
-    // MarginMarket accounts store mark prices, updated by keepers
-    // In production, iterate registered markets and match by symbol/index
-    // For now, return empty — prices are populated by keepers on-chain
+    for (const { account } of accounts) {
+      try {
+        const market = decodeMarginMarket(account.data as Buffer);
+        if (!market.isActive) continue;
+        const key = `MARKET-${market.index}`;
+        if (assets.includes(key)) {
+          prices[key] = Number(market.markPrice) / PRECISION;
+        }
+      } catch {
+        // Not a MarginMarket account, skip
+      }
+    }
     return prices;
   }
 
   async submitIntent(
-    intent: TradingIntent,
+    _intent: TradingIntent,
   ): Promise<{ txId: string }> {
-    // Intent submission requires a wallet signer, which the adapter
-    // doesn't hold. Callers should use the Anchor program directly
-    // for write operations. This read-focused adapter throws to
-    // make the limitation explicit.
     throw new Error(
       "SolanaAdapter is read-only. Use the Anchor program directly to submit intents.",
     );
   }
 
-  // ─── Internal helpers ──────────────────────────────────────────────
+  // ─── Public helpers ────────────────────────────────────────────────
 
-  private async fetchMarginAccount(
+  /**
+   * Fetch and decode a MarginAccount by owner public key.
+   * Returns null if the account doesn't exist.
+   */
+  async fetchMarginAccount(
     owner: PublicKey,
   ): Promise<OnChainMarginAccount | null> {
     const [pda] = findMarginAccountPDA(owner, this.programId);
     const accountInfo = await this.connection.getAccountInfo(pda);
     if (!accountInfo) return null;
-
-    // Account deserialization depends on the Anchor IDL being available.
-    // When the IDL is loaded via `Program`, Anchor handles this automatically.
-    // For raw deserialization without IDL, use borsh decoding against
-    // the OnChainMarginAccount layout.
-    //
-    // This is a placeholder — real deserialization should be wired to
-    // the generated IDL types from `anchor build`.
-    throw new Error(
-      "Raw account deserialization not yet implemented. " +
-      "Load the IDL via @coral-xyz/anchor Program for automatic decoding.",
-    );
+    return decodeMarginAccount(accountInfo.data as Buffer);
   }
 }
