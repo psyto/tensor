@@ -15,8 +15,9 @@ tensor/
     tensor-intents         Intent language — multi-leg bundles, builder pattern
     tensor-solver          Off-chain solver — decomposition, ordering, margin simulation
   packages/
-    types                  TypeScript type definitions
+    core                   Core TypeScript type definitions
     sdk                    TypeScript SDK
+    qn-addon               QuickNode Marketplace add-on (margin, greeks, intents)
 ```
 
 ### Chain-Agnostic Core
@@ -45,7 +46,15 @@ The Solana-specific crates (`tensor-cpi`, `tensor-margin`) always require Anchor
 
 ## Building
 
-Build the Solana program (uses default `anchor` feature):
+The project uses **pnpm** (`packageManager: pnpm@10.31.0`) and **turbo** for build orchestration.
+
+Build everything (TypeScript packages via turbo + Anchor build for programs):
+
+```sh
+pnpm build
+```
+
+Build only the Solana program:
 
 ```sh
 anchor build
@@ -80,6 +89,16 @@ tensor-math = { git = "...", default-features = false }
 ```
 
 Types use `borsh` serialization and `[u8; 32]` for address fields instead of `Pubkey`. All math, intent, and solver logic works identically.
+
+## QuickNode Add-on
+
+The `packages/qn-addon` package provides a QuickNode Marketplace add-on (slug: `fabrknt-margin-engine`) with the following API endpoints:
+
+| Route | Description |
+|-------|-------------|
+| `/margin` | Margin calculations and portfolio health queries |
+| `/greeks` | Greeks computation (delta, gamma, vega, theta) for positions |
+| `/intents` | Submit and query multi-leg trading intents |
 
 ## Program ID
 
