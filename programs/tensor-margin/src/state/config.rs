@@ -53,6 +53,21 @@ pub struct MarginConfig {
     /// Protocol paused
     pub is_paused: bool,
 
+    /// Max absolute gamma notional per account (1e6 scaled, 0 = unlimited)
+    pub max_account_gamma_notional: u64,
+
+    /// Max absolute gamma notional per market (1e6 scaled, 0 = unlimited)
+    pub max_market_gamma_notional: u64,
+
+    /// Solver auction duration in seconds (0 = no auction required)
+    pub auction_duration_seconds: i64,
+
+    /// Minimum stake required to register as a solver (in collateral units)
+    pub min_solver_stake: u64,
+
+    /// Slash rate in bps for failed solver execution
+    pub solver_slash_rate_bps: u16,
+
     /// PDA bump
     pub bump: u8,
 }

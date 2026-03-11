@@ -3,6 +3,7 @@ import type {
   Greeks,
   PositionGreeks,
   PortfolioGreeks,
+  VolSurface,
 } from "./types";
 
 /* ------------------------------------------------------------------ */
@@ -73,17 +74,92 @@ export function d1d2(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Volatility surface interpolation                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Interpolate implied volatility from a discretized vol surface using
+ * bilinear interpolation between moneyness nodes and expiry buckets.
+ *
+ * @param surface  Vol surface data (moneyness_nodes, expiry_days, surface[][])
+ * @param strike   Option strike price
+ * @param spot     Current spot/mark price
+ * @param daysToExpiry  Days until option expiry
+ * @returns  Interpolated IV (annualized, e.g. 0.30 for 30%)
+ */
+export function interpolateVol(
+  surface: VolSurface,
+  strike: number,
+  spot: number,
+  daysToExpiry: number,
+): number {
+  const { moneyness_nodes, expiry_days, surface: grid } = surface;
+  if (moneyness_nodes.length === 0 || expiry_days.length === 0 || spot === 0) {
+    return 0;
+  }
+
+  const moneyness = strike / spot;
+
+  const [mLo, mHi, mFrac] = findBounds(moneyness_nodes, moneyness);
+  const [eLo, eHi, eFrac] = findBounds(expiry_days, daysToExpiry);
+
+  // Bilinear interpolation
+  const v00 = grid[eLo]?.[mLo] ?? 0;
+  const v01 = grid[eLo]?.[mHi] ?? 0;
+  const v10 = grid[eHi]?.[mLo] ?? 0;
+  const v11 = grid[eHi]?.[mHi] ?? 0;
+
+  const v0 = v00 + (v01 - v00) * mFrac;
+  const v1 = v10 + (v11 - v10) * mFrac;
+  return v0 + (v1 - v0) * eFrac;
+}
+
+/**
+ * Find bounding indices and fractional position in a sorted array.
+ */
+function findBounds(
+  arr: number[],
+  value: number,
+): [lo: number, hi: number, frac: number] {
+  if (arr.length <= 1) return [0, 0, 0];
+  if (value <= arr[0]) return [0, 0, 0];
+  if (value >= arr[arr.length - 1]) return [arr.length - 1, arr.length - 1, 0];
+
+  for (let i = 0; i < arr.length - 1; i++) {
+    if (value >= arr[i] && value <= arr[i + 1]) {
+      const range = arr[i + 1] - arr[i];
+      const frac = range > 0 ? (value - arr[i]) / range : 0;
+      return [i, i + 1, frac];
+    }
+  }
+  return [arr.length - 1, arr.length - 1, 0];
+}
+
+/* ------------------------------------------------------------------ */
 /*  computeGreeks (single position)                                    */
 /* ------------------------------------------------------------------ */
 
 /**
  * Compute Black-Scholes Greeks for a single option position.
  * Returns unit Greeks multiplied by position size and adjusted for side.
+ * If the position has a vol_surface, uses interpolated IV instead of flat implied_volatility.
  */
 export function computeGreeks(position: OptionPosition): PositionGreeks {
   const S = position.underlying_price;
   const K = position.strike;
-  const sigma = position.implied_volatility;
+
+  // Use vol surface if available, otherwise flat IV
+  let sigma = position.implied_volatility;
+  if (position.vol_surface) {
+    const expiryDate = new Date(position.expiry);
+    const now = new Date();
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const dte = Math.max(1, (expiryDate.getTime() - now.getTime()) / msPerDay);
+    const interpolated = interpolateVol(position.vol_surface, K, S, dte);
+    if (interpolated > 0) {
+      sigma = interpolated;
+    }
+  }
   const r = position.risk_free_rate ?? 0.05;
 
   // Time to expiry in years

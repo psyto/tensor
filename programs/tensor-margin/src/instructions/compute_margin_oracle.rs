@@ -46,6 +46,14 @@ pub fn handler<'info>(
     let mut mark_prices = vec![0u64; 256];
     let mut primary_mark_price = 0u64;
     let mut primary_implied_vol = 0u64;
+    let mut primary_realized_var: u64 = 0; // raw variance for dynamic gamma margin
+
+    // Vol surface from primary market
+    let mut vol_surface = [[0u64; 9]; 4];
+    let mut vol_moneyness_nodes = [0u64; 9];
+    let mut vol_expiry_days = [0u16; 4];
+    let mut vol_node_count: usize = 0;
+    let mut vol_expiry_count: usize = 0;
 
     let mut i = 0;
     while i + 1 < remaining.len() {
@@ -106,6 +114,15 @@ pub fn handler<'info>(
         if primary_mark_price == 0 {
             primary_mark_price = oracle_price;
             primary_implied_vol = epoch_variance;
+            // Store raw variance for dynamic gamma margin scaling
+            primary_realized_var = oracle_data.current_variance;
+
+            // Capture vol surface from this market
+            vol_surface = market_data.vol_surface;
+            vol_moneyness_nodes = market_data.vol_moneyness_nodes;
+            vol_expiry_days = market_data.vol_expiry_days;
+            vol_node_count = market_data.vol_node_count as usize;
+            vol_expiry_count = market_data.vol_expiry_count as usize;
         }
     }
 
@@ -160,15 +177,49 @@ pub fn handler<'info>(
         &mark_prices,
     );
 
-    // Compute margin requirements
-    let initial_margin = tensor_math::compute_initial_margin(
+    // Dynamic gamma margin: scale by realized vol vs implied vol
+    let effective_gamma_bps = tensor_math::dynamic_gamma_margin_bps(
+        config.gamma_margin_bps,
+        primary_realized_var,
+        primary_implied_vol,
+    );
+
+    // Compute base margin (delta + gamma charges, vega computed separately via surface)
+    let base_margin = tensor_math::compute_initial_margin(
         &greeks,
         primary_mark_price,
         primary_implied_vol,
         config.initial_margin_bps,
-        config.gamma_margin_bps,
-        config.vega_margin_bps,
+        effective_gamma_bps,
+        0, // vega charge computed below via vol surface
     );
+
+    // Compute vega charge using vol surface (or flat fallback)
+    let vega_charge = if vol_node_count > 0 {
+        let per_pos_vols = tensor_math::compute_per_position_vols(
+            &account.option_positions,
+            &vol_moneyness_nodes,
+            &vol_expiry_days,
+            &vol_surface,
+            vol_node_count,
+            vol_expiry_count,
+            primary_mark_price,
+            clock.unix_timestamp,
+            primary_implied_vol,
+        );
+        tensor_math::compute_vega_charge_surface(
+            &account.option_positions,
+            &per_pos_vols,
+            config.vega_margin_bps,
+            clock.unix_timestamp,
+        )
+    } else {
+        let abs_vega = if greeks.vega < 0 { -greeks.vega } else { greeks.vega } as u128;
+        (abs_vega * primary_implied_vol as u128 * config.vega_margin_bps as u128
+            / (10_000u128 * 10_000u128)) as u64
+    };
+
+    let initial_margin = base_margin.saturating_add(vega_charge);
 
     let maint_margin = tensor_math::compute_maintenance_margin(
         initial_margin,

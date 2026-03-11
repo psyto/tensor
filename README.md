@@ -7,17 +7,17 @@ Unified margin engine with Greeks-aware portfolio margining across perpetuals, o
 ```
 tensor/
   programs/
-    tensor-margin          Anchor program — margin engine, trading, risk
+    tensor-margin          Anchor program — margin engine, trading, risk, solver auctions
   crates/
-    tensor-types           Shared types (positions, Greeks, enums)
-    tensor-math            Margin math, equity, health, liquidation
+    tensor-types           Shared types (positions, Greeks, enums, investor categories)
+    tensor-math            Margin math, equity, health, liquidation, vol surface interpolation
     tensor-cpi             Zero-copy CPI readers (Sigma, Sovereign, Northtail, ZK Credit)
     tensor-intents         Intent language — multi-leg bundles, builder pattern
     tensor-solver          Off-chain solver — decomposition, ordering, margin simulation
   packages/
-    core                   Chain-agnostic TypeScript types, math & adapters
-    solana                 Solana adapter — reads MarginAccount state via RPC
-    sdk                    TypeScript SDK
+    core                   Chain-agnostic TypeScript types, math, Greeks, vol surface, solver client
+    solana                 Solana adapter, borsh decoders, instruction builders, keeper bots
+    sdk                    TypeScript SDK (WIP)
     qn-addon               QuickNode Marketplace add-on (margin, greeks, intents)
 ```
 
@@ -39,11 +39,86 @@ The Solana-specific crates (`tensor-cpi`, `tensor-margin`) always require Anchor
 - **Portfolio Margining** — Delta-netting across spot, perps, and options reduces margin for hedged positions to near zero.
 - **Greeks-Aware Risk** — Gamma and vega charges capture non-linear option risk. Theta decay is tracked.
 - **Multi-Product** — Perpetual futures, vanilla/exotic options (Asian, barrier), spot trading (via Northtail AMM), and lending/borrowing in a single margin account.
+- **Volatility Surface** — Bilinear interpolation over a moneyness x expiry grid (9 strikes, 4 tenors). Replaces flat IV with strike/expiry-dependent implied volatility for accurate vega charges.
+- **Dynamic Gamma Margin** — Gamma margin scales up when realized volatility exceeds implied volatility, capped at 5x base rate.
+- **Gamma Concentration Limits** — Per-account and per-market gamma limits, tiered by investor category (Retail 10B, Qualified 100B, Institutional 500B).
 - **Intent Language** — Declarative multi-leg trading intents (e.g., delta-neutral spread, covered call) with constraint validation.
+- **Solver Auctions** — Decentralized intent execution via competitive bidding. Solvers stake collateral, submit bids during a timed auction, and the best price wins. Failed fills trigger slashing.
 - **Off-Chain Solver** — Decomposes intents into optimal execution sequences, orders hedging legs first to minimize peak margin.
 - **ZK Credit Scores** — Privacy-preserving credit tiers (Bronze through Platinum) that reduce initial margin requirements by up to 20% and increase max leverage.
 - **Identity-Gated Leverage** — Sovereign reputation tiers map to investor categories (Retail 5x, Qualified 20x, Institutional 50x).
-- **Permissionless Cranks** — Anyone can call `compute_margin` to keep accounts up to date.
+- **Permissionless Cranks** — Anyone can call `compute_margin`, `liquidate`, or `settle_auction`.
+
+## On-Chain Instructions
+
+The Anchor program exposes 27 instructions:
+
+| Category | Instructions |
+|----------|-------------|
+| Admin | `initialize_config`, `register_market` |
+| Account | `create_margin_account`, `deposit_collateral`, `withdraw_collateral` |
+| Trading | `open_perp`, `close_perp`, `open_option`, `execute_spot_swap` |
+| Risk (permissionless) | `compute_margin`, `compute_margin_oracle`, `liquidate` |
+| Oracle | `update_mark_price`, `update_mark_price_oracle`, `update_vol_surface` |
+| Identity/Credit | `refresh_identity`, `refresh_zk_credit` |
+| Intents | `submit_intent`, `execute_intent`, `cancel_intent` |
+| Solver Auctions | `register_solver`, `deregister_solver`, `submit_bid`, `settle_auction`, `slash_solver` |
+
+## Keeper Bots
+
+The `@tensor/solana` package includes three runnable keeper services:
+
+### Crank Bot
+
+Settles expired solver auctions and refreshes stale margin accounts.
+
+```sh
+cd packages/solana
+RPC_URL=http://localhost:8899 pnpm crank
+```
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `RPC_URL` | `http://localhost:8899` | Solana RPC endpoint |
+| `KEYPAIR_PATH` | `~/.config/solana/id.json` | Signer keypair |
+| `POLL_INTERVAL_MS` | `10000` | Poll interval in ms |
+| `CRANK_MARGIN` | `true` | Also refresh stale margins |
+
+### Vol Surface Keeper
+
+Reads oracle variance, builds vol surfaces with skew/term structure, and updates on-chain.
+
+```sh
+cd packages/solana
+MARKET_INDICES=0,1 RPC_URL=http://localhost:8899 pnpm vol-keeper
+```
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `RPC_URL` | `http://localhost:8899` | Solana RPC endpoint |
+| `KEYPAIR_PATH` | `~/.config/solana/id.json` | Authority keypair |
+| `MARKET_INDICES` | `0` | Comma-separated market indices |
+| `POLL_INTERVAL_MS` | `60000` | Update interval in ms |
+
+### Liquidation Bot
+
+Scans for undercollateralized accounts and liquidates them, collecting fees.
+
+```sh
+cd packages/solana
+RPC_URL=http://localhost:8899 pnpm liquidator
+```
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `RPC_URL` | `http://localhost:8899` | Solana RPC endpoint |
+| `KEYPAIR_PATH` | `~/.config/solana/id.json` | Signer keypair |
+| `POLL_INTERVAL_MS` | `5000` | Poll interval in ms |
+| `MAX_LIQUIDATIONS` | `5` | Max liquidations per cycle |
+| `REFRESH_MARGIN` | `true` | Refresh stale margins before scanning |
+| `MARGIN_STALENESS_SECONDS` | `30` | Staleness threshold for margin refresh |
+
+The liquidator prioritizes bankrupt accounts first, then by lowest equity. It optionally refreshes stale margins to discover newly-liquidatable accounts before attempting liquidation.
 
 ## Building
 
@@ -63,13 +138,41 @@ anchor build
 
 ## Testing
 
-Run all tests (with Anchor/Solana features enabled by default):
+### Rust
 
 ```sh
 cargo test
 ```
 
-217 tests cover margin math, Greeks computation, delta-netting, liquidation waterfall, intent validation, solver optimization, credit discounts, and end-to-end trading scenarios.
+249 Rust tests across all crates and 32 integration scenarios covering:
+
+- Margin math, Greeks computation, delta-netting
+- Liquidation waterfall priority
+- Vol surface interpolation (moneyness + expiry dimensions)
+- Dynamic gamma margin scaling (calm, volatile, extreme markets)
+- Gamma concentration limits by investor category
+- Solver registration, auction lifecycle, settlement, slashing
+- Intent validation, solver optimization, credit discounts
+- End-to-end trading scenarios (long/short perps, straddles, multi-product portfolios)
+
+### TypeScript
+
+```sh
+pnpm test
+```
+
+125 TypeScript tests across `@tensor/core` (87) and `@tensor/solana` (38) covering:
+
+- Black-Scholes Greeks (delta, gamma, vega, theta)
+- Portfolio aggregation and put-call parity
+- Vol surface generation, on-chain serialization, oracle fitting
+- Solver bid evaluation, auction processing, settlement scanning
+- Borsh decoder correctness (MarginAccount, MarginMarket, SolverRegistry, IntentAccount)
+- Instruction builder structure (liquidate, settle_auction, compute_margin, update_vol_surface)
+- Margin calculations, health status, delta netting
+- Intent bundle creation, validation, constraint checking
+
+**Total: 374 tests, all passing.**
 
 ### Chain-Agnostic Build
 
@@ -91,24 +194,67 @@ tensor-math = { git = "...", default-features = false }
 
 Types use `borsh` serialization and `[u8; 32]` for address fields instead of `Pubkey`. All math, intent, and solver logic works identically.
 
-### TypeScript Chain Abstraction
+## TypeScript Packages
 
-The `@tensor/core` package is fully chain-agnostic and defines:
+### @tensor/core
 
-- **`Chain`** — `"solana" | "evm"` type union (consistent with `@sentinel/core` and `@accredit/core`)
-- **`ChainAdapter`** — Interface for reading on-chain state (positions, collateral, mark prices) and submitting intents
-- **`CostEstimator`** — Injectable execution cost estimator with built-in defaults for Solana (200k CU/step) and EVM (150k gas/step)
-
-The `solveIntent()` function accepts an optional `CostEstimator` parameter (defaults to Solana):
+Chain-agnostic math and types. No Solana dependency.
 
 ```typescript
-import { solveIntent, evmCostEstimator } from "@tensor/core";
+import {
+  computeGreeks,
+  aggregatePortfolioGreeks,
+  interpolateVol,
+  buildVolSurface,
+  volSurfaceToOnChain,
+  fitVolSurfaceFromOracle,
+  evaluateBidOpportunity,
+  processAuction,
+  findSettleableAuctions,
+  solveIntent,
+  evmCostEstimator,
+} from "@tensor/core";
+```
 
-// Solana (default)
-const result = solveIntent(intent, constraints);
+Key modules:
+- **greeks** — Black-Scholes Greeks with optional vol surface interpolation
+- **margin** — Margin calculations, health status, delta netting
+- **intents** — Intent bundle creation, validation, auction evaluation
+- **vol-surface** — Vol surface generation from ATM IV + skew/term multipliers
+- **solver-client** — Solver bid evaluation, auction processing, crank bot logic
 
-// EVM
-const result = solveIntent(intent, constraints, evmCostEstimator);
+### @tensor/solana
+
+Solana adapter, borsh decoders, instruction builders, and keeper bots.
+
+```typescript
+import {
+  // Adapter
+  SolanaAdapter,
+  // PDAs
+  findMarginAccountPDA,
+  findMarginMarketPDAByIndex,
+  findMarginConfigPDA,
+  findSolverRegistryPDA,
+  findIntentAccountPDA,
+  // Decoders
+  decodeMarginAccount,
+  decodeMarginMarket,
+  decodeSolverRegistry,
+  decodeIntentAccount,
+  // Instruction builders
+  liquidateIx,
+  settleAuctionIx,
+  computeMarginIx,
+  updateVolSurfaceIx,
+  // Keeper bots
+  startCrankBot,
+  startLiquidator,
+  startVolKeeper,
+  // Vol surface
+  buildVolSurfaceParams,
+  buildVolSurfaceFromAtmVol,
+} from "@tensor/solana";
 ```
 
 ## QuickNode Add-on

@@ -6,6 +6,11 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "crank": "tsx src/run-crank.ts",
+    "vol-keeper": "tsx src/run-vol-keeper.ts",
+    "liquidator": "tsx src/run-liquidator.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -14,6 +19,8 @@
   },
   "devDependencies": {
     "tsup": "^8.0.0",
-    "typescript": "^5.6.0"
+    "tsx": "^4.7.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
   }
 }

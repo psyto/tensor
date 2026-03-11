@@ -16,6 +16,15 @@ export interface Position {
   expiry?: string;
 }
 
+export interface VolSurface {
+  /** IV values indexed [expiry_bucket][moneyness_node], annualized (e.g., 0.30 = 30%) */
+  surface: number[][];
+  /** Moneyness nodes (strike/spot ratio, e.g., 0.7, 0.8, ..., 1.2) */
+  moneyness_nodes: number[];
+  /** Expiry bucket boundaries in days */
+  expiry_days: number[];
+}
+
 export interface OptionPosition {
   asset: string;
   option_type: "call" | "put";
@@ -26,6 +35,8 @@ export interface OptionPosition {
   underlying_price: number;
   implied_volatility: number;
   risk_free_rate?: number;
+  /** Optional vol surface for strike/expiry-dependent IV */
+  vol_surface?: VolSurface;
 }
 
 // ---- Margin types --------------------------------------------------
@@ -146,4 +157,34 @@ export interface SolverResult {
   estimated_cost: number;
   estimated_margin_required: number;
   optimization_notes: string[];
+  /** Winning solver bid (if auction was run) */
+  winning_bid?: SolverBid;
+}
+
+// ---- Solver types (Phase 4) -------------------------------------------
+
+export interface SolverBid {
+  solver: string;
+  bid_price: number;
+  bid_timestamp: string;
+  is_active: boolean;
+}
+
+export interface SolverEntry {
+  solver: string;
+  stake: number;
+  total_fills: number;
+  total_volume: number;
+  slash_count: number;
+  is_active: boolean;
+  registered_at: string;
+}
+
+// ---- Gamma limits (Phase 4) -------------------------------------------
+
+export interface GammaLimits {
+  /** Max absolute gamma notional per account (0 = unlimited) */
+  max_account_gamma_notional: number;
+  /** Max absolute gamma notional per market (0 = unlimited) */
+  max_market_gamma_notional: number;
 }

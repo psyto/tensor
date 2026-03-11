@@ -1,5 +1,10 @@
 use anchor_lang::prelude::*;
 
+/// Maximum moneyness nodes in the vol surface (strike dimension)
+pub const MAX_VOL_NODES: usize = 9;
+/// Maximum expiry buckets in the vol surface (time dimension)
+pub const MAX_EXPIRY_BUCKETS: usize = 4;
+
 /// Registered market within the unified margin system.
 /// Each market represents a tradeable asset (SOL, BTC, ETH, etc.)
 /// and links to oracle feeds + product-specific programs.
@@ -60,6 +65,28 @@ pub struct MarginMarket {
     /// Whether this market is active
     pub is_active: bool,
 
+    // --- Phase 4: Gamma concentration tracking ---
+
+    /// Aggregate long gamma across all accounts (1e6 scaled)
+    pub aggregate_gamma_long: i64,
+    /// Aggregate short gamma across all accounts (1e6 scaled)
+    pub aggregate_gamma_short: i64,
+
+    // --- Phase 4: Volatility surface ---
+
+    /// IV in bps, indexed [expiry_bucket][moneyness_bucket].
+    /// When vol_node_count == 0, falls back to scalar implied_vol_bps.
+    #[max_len(MAX_EXPIRY_BUCKETS)]
+    pub vol_surface: [[u64; MAX_VOL_NODES]; MAX_EXPIRY_BUCKETS],
+    /// Moneyness nodes in 1e6 (e.g., 700_000 = 0.7, 1_000_000 = ATM)
+    pub vol_moneyness_nodes: [u64; MAX_VOL_NODES],
+    /// Expiry bucket boundaries in days
+    pub vol_expiry_days: [u16; MAX_EXPIRY_BUCKETS],
+    /// Number of active moneyness nodes (0 = use flat implied_vol_bps)
+    pub vol_node_count: u8,
+    /// Number of active expiry buckets
+    pub vol_expiry_count: u8,
+
     /// PDA bump
     pub bump: u8,
 }
@@ -113,6 +140,13 @@ mod tests {
             open_interest_short: 0,
             total_volume: 0,
             is_active: true,
+            aggregate_gamma_long: 0,
+            aggregate_gamma_short: 0,
+            vol_surface: [[0u64; MAX_VOL_NODES]; MAX_EXPIRY_BUCKETS],
+            vol_moneyness_nodes: [0u64; MAX_VOL_NODES],
+            vol_expiry_days: [0u16; MAX_EXPIRY_BUCKETS],
+            vol_node_count: 0,
+            vol_expiry_count: 0,
             bump: 255,
         }
     }

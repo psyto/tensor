@@ -7,6 +7,9 @@ import {
   OptionKind,
   LendingSide,
   ZkCreditTier,
+  IntentStatus,
+  IntentType,
+  type ProductType,
   type OnChainPerpPosition,
   type OnChainSpotBalance,
   type OnChainOptionPosition,
@@ -14,11 +17,16 @@ import {
   type OnChainPortfolioGreeks,
   type OnChainMarginAccount,
   type OnChainMarginMarket,
+  type OnChainSolverEntry,
+  type OnChainSolverRegistry,
+  type OnChainIntentLeg,
+  type OnChainSolverBid,
+  type OnChainIntentAccount,
 } from "./accounts.js";
 
 // ── Buffer reader ──────────────────────────────────────────────────
 
-class BorshReader {
+export class BorshReader {
   private offset = 0;
   constructor(private buf: Buffer) {}
 
@@ -48,6 +56,20 @@ class BorshReader {
     const v = this.buf.readBigInt64LE(this.offset);
     this.offset += 8;
     return v;
+  }
+
+  u128(): bigint {
+    const lo = this.buf.readBigUInt64LE(this.offset);
+    const hi = this.buf.readBigUInt64LE(this.offset + 8);
+    this.offset += 16;
+    return (hi << 64n) | lo;
+  }
+
+  i128(): bigint {
+    const lo = this.buf.readBigUInt64LE(this.offset);
+    const hi = this.buf.readBigInt64LE(this.offset + 8);
+    this.offset += 16;
+    return (hi << 64n) | lo;
   }
 
   bool(): boolean {
@@ -147,12 +169,51 @@ function decodePortfolioGreeks(r: BorshReader): OnChainPortfolioGreeks {
   };
 }
 
+// SolverEntry: Pubkey(32) + u64(8) + u64(8) + u128(16) + u16(2) + bool(1) + i64(8) = 75 bytes
+export function decodeSolverEntry(r: BorshReader): OnChainSolverEntry {
+  return {
+    solver: r.pubkey(),
+    stake: r.u64(),
+    totalFills: r.u64(),
+    totalVolume: r.u128(),
+    slashCount: r.u16(),
+    isActive: r.bool(),
+    registeredAt: r.i64(),
+  };
+}
+
+// IntentLeg: u8 + u16 + i64 + u64 + bool = 20 bytes
+export function decodeIntentLeg(r: BorshReader): OnChainIntentLeg {
+  return {
+    productType: r.u8() as ProductType,
+    marketIndex: r.u16(),
+    size: r.i64(),
+    limitPrice: r.u64(),
+    isActive: r.bool(),
+  };
+}
+
+// SolverBid: Pubkey(32) + u64(8) + i64(8) + bool(1) = 49 bytes
+export function decodeSolverBid(r: BorshReader): OnChainSolverBid {
+  return {
+    solver: r.pubkey(),
+    bidPrice: r.u64(),
+    bidTimestamp: r.i64(),
+    isActive: r.bool(),
+  };
+}
+
 // ── Top-level decoders ─────────────────────────────────────────────
 
 const MAX_PERP_POSITIONS = 8;
 const MAX_SPOT_BALANCES = 16;
 const MAX_OPTION_POSITIONS = 8;
 const MAX_LENDING_POSITIONS = 8;
+const MAX_VOL_NODES = 9;
+const MAX_EXPIRY_BUCKETS = 4;
+const MAX_SOLVERS = 16;
+const MAX_LEGS = 4;
+const MAX_BIDS = 8;
 
 /**
  * Decode a MarginAccount from raw account data.
@@ -254,14 +315,172 @@ export function decodeMarginMarket(data: Buffer): OnChainMarginMarket {
   const r = new BorshReader(data);
   r.skip(8); // Anchor discriminator
 
+  const index = r.u16();
+  const symbol = r.string();
+  const baseMint = r.pubkey();
+  const oracle = r.pubkey();
+  const varianceTracker = r.pubkey();
+  const spotEnabled = r.bool();
+  const perpEnabled = r.bool();
+  const optionsEnabled = r.bool();
+  const lendingEnabled = r.bool();
+  const initialMarginBps = r.u64();
+  const maintenanceRatioBps = r.u64();
+  const maxPositionSize = r.u64();
+  const markPrice = r.u64();
+  const impliedVolBps = r.u64();
+  const fundingRateBps = r.i64();
+  const cumulativeFundingIndex = r.i128();
+  const lastFundingUpdate = r.i64();
+  const openInterestLong = r.u64();
+  const openInterestShort = r.u64();
+  const totalVolume = r.u128();
+  const isActive = r.bool();
+  const aggregateGammaLong = r.i64();
+  const aggregateGammaShort = r.i64();
+
+  // vol_surface: [[u64; 9]; 4] — fixed-size array, no length prefix
+  const volSurface: bigint[][] = [];
+  for (let row = 0; row < MAX_EXPIRY_BUCKETS; row++) {
+    const cols: bigint[] = [];
+    for (let col = 0; col < MAX_VOL_NODES; col++) {
+      cols.push(r.u64());
+    }
+    volSurface.push(cols);
+  }
+
+  // vol_moneyness_nodes: [u64; 9]
+  const volMoneynessNodes: bigint[] = [];
+  for (let i = 0; i < MAX_VOL_NODES; i++) {
+    volMoneynessNodes.push(r.u64());
+  }
+
+  // vol_expiry_days: [u16; 4]
+  const volExpiryDays: number[] = [];
+  for (let i = 0; i < MAX_EXPIRY_BUCKETS; i++) {
+    volExpiryDays.push(r.u16());
+  }
+
+  const volNodeCount = r.u8();
+  const volExpiryCount = r.u8();
+  const bump = r.u8();
+
   return {
-    index: r.u16(),
-    symbol: r.string(),
-    baseMint: r.pubkey(),
-    markPrice: r.u64(),
-    impliedVolBps: r.u64(),
-    fundingRateBps: r.i64(),
-    isActive: r.bool(),
-    bump: r.u8(),
+    index,
+    symbol,
+    baseMint,
+    oracle,
+    varianceTracker,
+    spotEnabled,
+    perpEnabled,
+    optionsEnabled,
+    lendingEnabled,
+    initialMarginBps,
+    maintenanceRatioBps,
+    maxPositionSize,
+    markPrice,
+    impliedVolBps,
+    fundingRateBps,
+    cumulativeFundingIndex,
+    lastFundingUpdate,
+    openInterestLong,
+    openInterestShort,
+    totalVolume,
+    isActive,
+    aggregateGammaLong,
+    aggregateGammaShort,
+    volSurface,
+    volMoneynessNodes,
+    volExpiryDays,
+    volNodeCount,
+    volExpiryCount,
+    bump,
+  };
+}
+
+/**
+ * Decode a SolverRegistry from raw account data.
+ * Skips the 8-byte Anchor discriminator.
+ */
+export function decodeSolverRegistry(data: Buffer): OnChainSolverRegistry {
+  const r = new BorshReader(data);
+  r.skip(8); // Anchor discriminator
+
+  const authority = r.pubkey();
+
+  const solvers: OnChainSolverEntry[] = [];
+  for (let i = 0; i < MAX_SOLVERS; i++) {
+    solvers.push(decodeSolverEntry(r));
+  }
+
+  const solverCount = r.u8();
+  const bump = r.u8();
+
+  return {
+    authority,
+    solvers,
+    solverCount,
+    bump,
+  };
+}
+
+/**
+ * Decode an IntentAccount from raw account data.
+ * Skips the 8-byte Anchor discriminator.
+ */
+export function decodeIntentAccount(data: Buffer): OnChainIntentAccount {
+  const r = new BorshReader(data);
+  r.skip(8); // Anchor discriminator
+
+  const marginAccount = r.pubkey();
+  const intentId = r.u64();
+  const intentType = r.u8() as IntentType;
+  const status = r.u8() as IntentStatus;
+
+  const legs: OnChainIntentLeg[] = [];
+  for (let i = 0; i < MAX_LEGS; i++) {
+    legs.push(decodeIntentLeg(r));
+  }
+
+  const legCount = r.u8();
+  const filledLegs = r.u8();
+  const maxSlippageBps = r.u16();
+  const minFillRatioBps = r.u16();
+  const deadline = r.i64();
+  const maxTotalCost = r.u64();
+  const totalMarginUsed = r.u64();
+  const createdAt = r.i64();
+  const updatedAt = r.i64();
+
+  const bids: OnChainSolverBid[] = [];
+  for (let i = 0; i < MAX_BIDS; i++) {
+    bids.push(decodeSolverBid(r));
+  }
+
+  const bidCount = r.u8();
+  const auctionEnd = r.i64();
+  const winningSolver = r.pubkey();
+  const bump = r.u8();
+
+  return {
+    marginAccount,
+    intentId,
+    intentType,
+    status,
+    legs,
+    legCount,
+    filledLegs,
+    maxSlippageBps,
+    minFillRatioBps,
+    deadline,
+    maxTotalCost,
+    totalMarginUsed,
+    createdAt,
+    updatedAt,
+    bids,
+    bidCount,
+    auctionEnd,
+    winningSolver,
+    bump,
   };
 }

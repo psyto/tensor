@@ -3,9 +3,18 @@ export {
   TENSOR_PROGRAM_ID,
   findMarginAccountPDA,
   findMarginMarketPDA,
+  findMarginMarketPDAByIndex,
   findMarginConfigPDA,
   findIntentAccountPDA,
+  findSolverRegistryPDA,
 } from "./pda.js";
+export {
+  readOracleVariance,
+  buildVolSurfaceParams,
+  buildVolSurfaceFromAtmVol,
+  startVolKeeper,
+  type VolKeeperConfig,
+} from "./vol-keeper.js";
 export {
   PRECISION,
   AccountHealth,
@@ -17,6 +26,7 @@ export {
   InvestorCategory,
   ZkCreditTier,
   IntentStatus,
+  IntentType,
   type OnChainPerpPosition,
   type OnChainSpotBalance,
   type OnChainOptionPosition,
@@ -24,8 +34,36 @@ export {
   type OnChainPortfolioGreeks,
   type OnChainMarginAccount,
   type OnChainMarginMarket,
+  type OnChainSolverEntry,
+  type OnChainSolverRegistry,
+  type OnChainIntentLeg,
+  type OnChainSolverBid,
+  type OnChainIntentAccount,
 } from "./accounts.js";
-export { decodeMarginAccount, decodeMarginMarket } from "./decoder.js";
+export {
+  BorshReader,
+  decodeMarginAccount,
+  decodeMarginMarket,
+  decodeSolverRegistry,
+  decodeIntentAccount,
+  decodeSolverEntry,
+  decodeIntentLeg,
+  decodeSolverBid,
+} from "./decoder.js";
+export {
+  anchorDiscriminator,
+  settleAuctionIx,
+  computeMarginIx,
+  liquidateIx,
+  updateVolSurfaceIx,
+  type UpdateVolSurfaceParams,
+} from "./ix.js";
+export {
+  startLiquidator,
+  type LiquidatorConfig,
+  type LiquidationEvent,
+  type LiquidatorStats,
+} from "./liquidator.js";
 
 // Re-export core types
 export {

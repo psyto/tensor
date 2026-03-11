@@ -176,4 +176,45 @@ pub mod tensor_margin {
     pub fn refresh_zk_credit(ctx: Context<RefreshZkCredit>) -> Result<()> {
         instructions::refresh_zk_credit::handler(ctx)
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — Solver Decentralization
+    // -----------------------------------------------------------------------
+
+    /// Register as a solver with stake deposit.
+    pub fn register_solver(ctx: Context<RegisterSolver>, stake: u64) -> Result<()> {
+        instructions::register_solver::handler(ctx, stake)
+    }
+
+    /// Deregister a solver and return their staked tokens.
+    pub fn deregister_solver(ctx: Context<DeregisterSolver>) -> Result<()> {
+        instructions::deregister_solver::handler(ctx)
+    }
+
+    /// Permissionless: slash a solver that won an auction but failed to fill before deadline.
+    pub fn slash_solver(ctx: Context<SlashSolver>) -> Result<()> {
+        instructions::slash_solver::handler(ctx)
+    }
+
+    /// Submit a bid on an intent during the auction window.
+    pub fn submit_bid(ctx: Context<SubmitBid>, bid_price: u64) -> Result<()> {
+        instructions::submit_bid::handler(ctx, bid_price)
+    }
+
+    /// Permissionless crank: settle the solver auction, selecting the best bid.
+    pub fn settle_auction(ctx: Context<SettleAuction>) -> Result<()> {
+        instructions::settle_auction::handler(ctx)
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — Volatility Surface
+    // -----------------------------------------------------------------------
+
+    /// Update the volatility surface for a market (admin/keeper only).
+    pub fn update_vol_surface(
+        ctx: Context<UpdateVolSurface>,
+        params: UpdateVolSurfaceParams,
+    ) -> Result<()> {
+        instructions::update_vol_surface::handler(ctx, params)
+    }
 }

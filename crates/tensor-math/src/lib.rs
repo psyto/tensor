@@ -289,6 +289,304 @@ pub fn shares_for_deposit(amount: u64, nav_per_share: u64) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Gamma Concentration Limits (Phase 4)
+// ---------------------------------------------------------------------------
+
+/// Compute gamma notional: |gamma| * mark_price^2 / PRECISION^2
+/// This measures the dollar-value sensitivity of delta to price moves.
+pub fn compute_gamma_notional(gamma: i64, mark_price: u64) -> u64 {
+    let abs_gamma = if gamma < 0 { -gamma } else { gamma } as u128;
+    (abs_gamma * (mark_price as u128).pow(2) / (PRECISION * PRECISION)) as u64
+}
+
+/// Check whether a portfolio's gamma notional is within the per-account limit.
+/// Returns true if within limits. When max_gamma_notional == 0, the limit is disabled.
+pub fn check_gamma_limits(
+    greeks: &PortfolioGreeks,
+    mark_price: u64,
+    max_gamma_notional: u64,
+) -> bool {
+    if max_gamma_notional == 0 {
+        return true; // unlimited
+    }
+    compute_gamma_notional(greeks.gamma, mark_price) <= max_gamma_notional
+}
+
+/// Compute the effective per-account gamma limit based on investor category.
+/// Returns the tighter of the global config limit and the category-specific limit.
+///
+/// Default category limits (gamma notional in 1e6 scaled):
+///   Retail:       10_000_000_000  ($10K gamma notional)
+///   Qualified:   100_000_000_000  ($100K)
+///   Institutional: 500_000_000_000  ($500K)
+pub fn category_gamma_limit(
+    config_limit: u64,
+    investor_category: &InvestorCategory,
+) -> u64 {
+    let category_limit = match investor_category {
+        InvestorCategory::Retail =>        10_000_000_000,
+        InvestorCategory::Qualified =>    100_000_000_000,
+        InvestorCategory::Institutional => 500_000_000_000,
+    };
+
+    if config_limit == 0 {
+        category_limit
+    } else {
+        config_limit.min(category_limit)
+    }
+}
+
+/// Check whether aggregate market gamma is within the per-market limit.
+/// `aggregate_gamma` is the sum of long + short gamma across all accounts.
+pub fn check_market_gamma_limits(
+    aggregate_gamma: i64,
+    mark_price: u64,
+    max_market_gamma_notional: u64,
+) -> bool {
+    if max_market_gamma_notional == 0 {
+        return true;
+    }
+    compute_gamma_notional(aggregate_gamma, mark_price) <= max_market_gamma_notional
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic Gamma Margin (Phase 4)
+// ---------------------------------------------------------------------------
+
+/// Compute a volatility-adjusted gamma margin rate.
+///
+/// Scales the base `gamma_margin_bps` proportionally to how much realized
+/// volatility exceeds the implied (baseline) vol. When markets are calm
+/// (realized <= implied), the base rate is used. When volatility spikes,
+/// the rate automatically tightens.
+///
+/// Formula: effective_bps = base_bps * max(1.0, sqrt(realized_var) / implied_vol)
+/// Capped at 5x the base rate to avoid extreme margin spikes.
+///
+/// Parameters:
+///   - base_gamma_bps: the configured gamma margin charge (e.g. 100 = 1%)
+///   - realized_variance_bps: annualized realized variance in bps (from oracle)
+///   - implied_vol_bps: current implied volatility in bps (sqrt of implied variance)
+pub fn dynamic_gamma_margin_bps(
+    base_gamma_bps: u64,
+    realized_variance_bps: u64,
+    implied_vol_bps: u64,
+) -> u64 {
+    if implied_vol_bps == 0 || realized_variance_bps == 0 {
+        return base_gamma_bps;
+    }
+
+    // realized_vol = sqrt(realized_variance_bps)
+    let realized_vol = integer_sqrt(realized_variance_bps as u128) as u64;
+
+    if realized_vol <= implied_vol_bps {
+        // Markets are calm or as-expected — use base rate
+        return base_gamma_bps;
+    }
+
+    // Scale up: effective = base * realized_vol / implied_vol
+    let scaled = (base_gamma_bps as u128 * realized_vol as u128 / implied_vol_bps as u128) as u64;
+
+    // Cap at 5x base to prevent extreme margin requirements
+    let max_bps = base_gamma_bps.saturating_mul(5);
+    scaled.min(max_bps)
+}
+
+/// Integer square root via Newton's method
+pub fn integer_sqrt(n: u128) -> u128 {
+    if n == 0 {
+        return 0;
+    }
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
+}
+
+// ---------------------------------------------------------------------------
+// Volatility Surface Interpolation (Phase 4)
+// ---------------------------------------------------------------------------
+
+/// Interpolate implied volatility from a discretized vol surface.
+///
+/// Uses bilinear interpolation between moneyness nodes and expiry buckets.
+/// Falls back to `fallback_vol_bps` when the surface is empty (node_count == 0).
+///
+/// Parameters:
+///   - moneyness_nodes: strike/spot ratios in 1e6 (e.g., 700_000 = 0.7)
+///   - expiry_days: expiry bucket boundaries in days
+///   - vol_surface: IV in bps, indexed [expiry_bucket][moneyness_bucket]
+///   - node_count: number of active moneyness nodes
+///   - expiry_count: number of active expiry buckets
+///   - strike: option strike price (1e6)
+///   - spot: current spot/mark price (1e6)
+///   - days_to_expiry: days until option expiry
+///   - fallback_vol_bps: flat IV to use when surface is empty
+pub fn interpolate_vol(
+    moneyness_nodes: &[u64],
+    expiry_days: &[u16],
+    vol_surface: &[[u64; 9]; 4],
+    node_count: usize,
+    expiry_count: usize,
+    strike: u64,
+    spot: u64,
+    days_to_expiry: u16,
+    fallback_vol_bps: u64,
+) -> u64 {
+    if node_count == 0 || expiry_count == 0 || spot == 0 {
+        return fallback_vol_bps;
+    }
+
+    // Compute moneyness = strike / spot in 1e6
+    let moneyness = (strike as u128 * PRECISION / spot as u128) as u64;
+
+    // Find bounding moneyness indices
+    let (m_lo, m_hi, m_frac) = find_bounding_indices(moneyness_nodes, node_count, moneyness);
+
+    // Find bounding expiry indices
+    let (e_lo, e_hi, e_frac) = find_bounding_expiry_indices(expiry_days, expiry_count, days_to_expiry);
+
+    // Bilinear interpolation
+    let v00 = vol_surface[e_lo][m_lo] as u128;
+    let v01 = vol_surface[e_lo][m_hi] as u128;
+    let v10 = vol_surface[e_hi][m_lo] as u128;
+    let v11 = vol_surface[e_hi][m_hi] as u128;
+
+    // Interpolate along moneyness at each expiry
+    let v0 = lerp(v00, v01, m_frac);
+    let v1 = lerp(v10, v11, m_frac);
+
+    // Interpolate along expiry
+    lerp(v0, v1, e_frac) as u64
+}
+
+/// Find the two bounding indices and fractional position for a value in a sorted array.
+/// Returns (lo_idx, hi_idx, fraction_in_1e6) where fraction is the position between lo and hi.
+fn find_bounding_indices(nodes: &[u64], count: usize, value: u64) -> (usize, usize, u128) {
+    if count <= 1 {
+        return (0, 0, 0);
+    }
+
+    // Clamp to range
+    if value <= nodes[0] {
+        return (0, 0, 0);
+    }
+    if value >= nodes[count - 1] {
+        return (count - 1, count - 1, 0);
+    }
+
+    for i in 0..count - 1 {
+        if value >= nodes[i] && value <= nodes[i + 1] {
+            let range = nodes[i + 1] - nodes[i];
+            let frac = if range > 0 {
+                (value - nodes[i]) as u128 * PRECISION / range as u128
+            } else {
+                0
+            };
+            return (i, i + 1, frac);
+        }
+    }
+
+    (count - 1, count - 1, 0)
+}
+
+/// Find bounding expiry indices (same logic but for u16 days).
+fn find_bounding_expiry_indices(days: &[u16], count: usize, value: u16) -> (usize, usize, u128) {
+    if count <= 1 {
+        return (0, 0, 0);
+    }
+    if value <= days[0] {
+        return (0, 0, 0);
+    }
+    if value >= days[count - 1] {
+        return (count - 1, count - 1, 0);
+    }
+    for i in 0..count - 1 {
+        if value >= days[i] && value <= days[i + 1] {
+            let range = days[i + 1] - days[i];
+            let frac = if range > 0 {
+                (value - days[i]) as u128 * PRECISION / range as u128
+            } else {
+                0
+            };
+            return (i, i + 1, frac);
+        }
+    }
+    (count - 1, count - 1, 0)
+}
+
+/// Linear interpolation: lerp(a, b, t) = a + (b - a) * t / PRECISION
+fn lerp(a: u128, b: u128, t: u128) -> u128 {
+    if b >= a {
+        a + (b - a) * t / PRECISION
+    } else {
+        a - (a - b) * t / PRECISION
+    }
+}
+
+/// Compute per-position implied vol for a set of option positions using a vol surface.
+/// Returns a vector of IV values (in bps) corresponding to each option position.
+pub fn compute_per_position_vols(
+    option_positions: &[OptionPosition],
+    moneyness_nodes: &[u64],
+    expiry_days: &[u16],
+    vol_surface: &[[u64; 9]; 4],
+    node_count: usize,
+    expiry_count: usize,
+    mark_price: u64,
+    current_time: i64,
+    fallback_vol_bps: u64,
+) -> Vec<u64> {
+    option_positions
+        .iter()
+        .map(|opt| {
+            if !opt.is_active || opt.strike == 0 {
+                return fallback_vol_bps;
+            }
+            let dte = if opt.expiry > current_time {
+                ((opt.expiry - current_time) / 86400) as u16
+            } else {
+                0
+            };
+            interpolate_vol(
+                moneyness_nodes,
+                expiry_days,
+                vol_surface,
+                node_count,
+                expiry_count,
+                opt.strike,
+                mark_price,
+                dte,
+                fallback_vol_bps,
+            )
+        })
+        .collect()
+}
+
+/// Compute vega charge using per-position implied vols instead of a single flat IV.
+/// vega_charge = sum(|vega_i| * vol_i * vega_margin_bps / BPS^2) for each active option.
+pub fn compute_vega_charge_surface(
+    option_positions: &[OptionPosition],
+    per_position_vols: &[u64],
+    vega_margin_bps: u64,
+    current_time: i64,
+) -> u64 {
+    let mut total_charge: u128 = 0;
+    for (i, opt) in option_positions.iter().enumerate() {
+        if !opt.is_active || opt.expiry <= current_time {
+            continue;
+        }
+        let abs_vega = opt.vega().unsigned_abs() as u128;
+        let vol = per_position_vols.get(i).copied().unwrap_or(0) as u128;
+        total_charge += abs_vega * vol * vega_margin_bps as u128 / (BPS * BPS);
+    }
+    total_charge as u64
+}
+
+// ---------------------------------------------------------------------------
 // ZK Credit Math (Phase 3)
 // ---------------------------------------------------------------------------
 
@@ -1123,5 +1421,283 @@ mod tests {
         assert_eq!(effective_max_leverage_bps(500_000, 10000), 510_000);
         // Some huge value should cap at 100x = 1_000_000
         assert_eq!(effective_max_leverage_bps(900_000, 200_000), 1_000_000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Gamma concentration limits
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compute_gamma_notional() {
+        // gamma = 500_000 (0.5 in 1e6), price = $150 (150_000_000)
+        // gamma_notional = 500_000 * 150_000_000^2 / (1e6 * 1e6)
+        //                = 500_000 * 22_500_000_000_000_000 / 1_000_000_000_000
+        //                = 11_250_000_000
+        let gn = compute_gamma_notional(500_000, 150_000_000);
+        assert_eq!(gn, 11_250_000_000);
+    }
+
+    #[test]
+    fn test_compute_gamma_notional_negative_gamma() {
+        // Absolute value should be used
+        let gn_pos = compute_gamma_notional(500_000, 150_000_000);
+        let gn_neg = compute_gamma_notional(-500_000, 150_000_000);
+        assert_eq!(gn_pos, gn_neg);
+    }
+
+    #[test]
+    fn test_check_gamma_limits_unlimited() {
+        let greeks = PortfolioGreeks {
+            gamma: -5_000_000,
+            ..Default::default()
+        };
+        // 0 = unlimited
+        assert!(check_gamma_limits(&greeks, 150_000_000, 0));
+    }
+
+    #[test]
+    fn test_check_gamma_limits_within() {
+        let greeks = PortfolioGreeks {
+            gamma: 100_000, // small gamma
+            ..Default::default()
+        };
+        // Large limit
+        assert!(check_gamma_limits(&greeks, 150_000_000, 100_000_000_000));
+    }
+
+    #[test]
+    fn test_check_gamma_limits_exceeded() {
+        let greeks = PortfolioGreeks {
+            gamma: -5_000_000, // large short gamma
+            ..Default::default()
+        };
+        // Small limit
+        assert!(!check_gamma_limits(&greeks, 150_000_000, 1_000));
+    }
+
+    #[test]
+    fn test_check_market_gamma_limits() {
+        // Within limit
+        assert!(check_market_gamma_limits(100_000, 150_000_000, 100_000_000_000));
+        // Unlimited
+        assert!(check_market_gamma_limits(-99_999_999, 150_000_000, 0));
+        // Exceeded
+        assert!(!check_market_gamma_limits(-5_000_000, 150_000_000, 1_000));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Volatility surface interpolation
+    // -----------------------------------------------------------------------
+
+    fn make_test_vol_surface() -> ([[u64; 9]; 4], [u64; 9], [u16; 4]) {
+        let mut surface = [[0u64; 9]; 4];
+        // 2 expiry buckets (7d, 30d), 3 moneyness nodes (0.9, 1.0, 1.1)
+        // 7d:  OTM put=4000, ATM=3000, OTM call=3500
+        surface[0][0] = 4000; // 0.9 moneyness, 7d
+        surface[0][1] = 3000; // 1.0 moneyness, 7d (ATM)
+        surface[0][2] = 3500; // 1.1 moneyness, 7d
+        // 30d: OTM put=3500, ATM=2500, OTM call=3000
+        surface[1][0] = 3500;
+        surface[1][1] = 2500;
+        surface[1][2] = 3000;
+
+        let mut moneyness = [0u64; 9];
+        moneyness[0] = 900_000;  // 0.9
+        moneyness[1] = 1_000_000; // 1.0
+        moneyness[2] = 1_100_000; // 1.1
+
+        let mut expiry = [0u16; 4];
+        expiry[0] = 7;
+        expiry[1] = 30;
+
+        (surface, moneyness, expiry)
+    }
+
+    #[test]
+    fn test_interpolate_vol_atm_exact_node() {
+        let (surface, moneyness, expiry) = make_test_vol_surface();
+        // ATM (moneyness=1.0) at 7d should return exactly 3000
+        let iv = interpolate_vol(&moneyness, &expiry, &surface, 3, 2, 100_000_000, 100_000_000, 7, 2500);
+        assert_eq!(iv, 3000);
+    }
+
+    #[test]
+    fn test_interpolate_vol_otm_put() {
+        let (surface, moneyness, expiry) = make_test_vol_surface();
+        // Moneyness=0.9 at 7d should return 4000
+        let iv = interpolate_vol(&moneyness, &expiry, &surface, 3, 2, 90_000_000, 100_000_000, 7, 2500);
+        assert_eq!(iv, 4000);
+    }
+
+    #[test]
+    fn test_interpolate_vol_between_nodes() {
+        let (surface, moneyness, expiry) = make_test_vol_surface();
+        // Moneyness=0.95 (between 0.9 and 1.0) at 7d
+        // Should interpolate between 4000 and 3000 → 3500
+        let iv = interpolate_vol(&moneyness, &expiry, &surface, 3, 2, 95_000_000, 100_000_000, 7, 2500);
+        assert_eq!(iv, 3500);
+    }
+
+    #[test]
+    fn test_interpolate_vol_between_expiries() {
+        let (surface, moneyness, expiry) = make_test_vol_surface();
+        // ATM at 18.5d (midpoint between 7d and 30d)
+        // 7d ATM=3000, 30d ATM=2500 → midpoint = 2750
+        let iv = interpolate_vol(&moneyness, &expiry, &surface, 3, 2, 100_000_000, 100_000_000, 18, 2500);
+        // 18 days: fraction = (18-7)/(30-7) = 11/23 ≈ 0.478
+        // interpolated = 3000 + (2500-3000)*0.478 = 3000 - 239 = 2761
+        assert!(iv >= 2750 && iv <= 2770); // approximate due to integer math
+    }
+
+    #[test]
+    fn test_interpolate_vol_fallback_when_empty() {
+        let surface = [[0u64; 9]; 4];
+        let moneyness = [0u64; 9];
+        let expiry = [0u16; 4];
+        let iv = interpolate_vol(&moneyness, &expiry, &surface, 0, 0, 100_000_000, 100_000_000, 7, 3000);
+        assert_eq!(iv, 3000); // falls back to flat IV
+    }
+
+    #[test]
+    fn test_interpolate_vol_clamped_to_edge() {
+        let (surface, moneyness, expiry) = make_test_vol_surface();
+        // Moneyness far below range (0.5) should clamp to leftmost node (0.9)
+        let iv = interpolate_vol(&moneyness, &expiry, &surface, 3, 2, 50_000_000, 100_000_000, 7, 2500);
+        assert_eq!(iv, 4000); // clamped to 0.9 moneyness node value
+    }
+
+    #[test]
+    fn test_compute_per_position_vols() {
+        let (surface, moneyness, expiry) = make_test_vol_surface();
+        let mut opts = [OptionPosition::default(); MAX_OPTION_POSITIONS];
+        opts[0] = OptionPosition {
+            strike: 100_000_000, // ATM
+            expiry: 86400 * 7 + 1000, // 7 days from time=1000
+            is_active: true,
+            ..Default::default()
+        };
+        let vols = compute_per_position_vols(
+            &opts, &moneyness, &expiry, &surface,
+            3, 2, 100_000_000, 1000, 2500,
+        );
+        assert_eq!(vols[0], 3000); // ATM at 7d
+        assert_eq!(vols[1], 2500); // inactive → fallback
+    }
+
+    #[test]
+    fn test_compute_vega_charge_surface_vs_flat() {
+        let mut opts = [OptionPosition::default(); MAX_OPTION_POSITIONS];
+        opts[0] = OptionPosition {
+            contracts: -10_000_000,
+            vega_per_contract: 100_000,
+            strike: 90_000_000, // OTM put
+            expiry: 1_000_000,
+            is_active: true,
+            ..Default::default()
+        };
+
+        // With higher per-position vol (OTM → higher IV), vega charge should be larger
+        let flat_vol = vec![3000u64; MAX_OPTION_POSITIONS];
+        let high_vol = vec![4000u64; MAX_OPTION_POSITIONS];
+
+        let charge_flat = compute_vega_charge_surface(&opts, &flat_vol, 50, 0);
+        let charge_high = compute_vega_charge_surface(&opts, &high_vol, 50, 0);
+        assert!(charge_high > charge_flat);
+    }
+
+    // --- integer_sqrt ---
+
+    #[test]
+    fn test_integer_sqrt_zero() {
+        assert_eq!(integer_sqrt(0), 0);
+    }
+
+    #[test]
+    fn test_integer_sqrt_perfect_squares() {
+        assert_eq!(integer_sqrt(1), 1);
+        assert_eq!(integer_sqrt(4), 2);
+        assert_eq!(integer_sqrt(9), 3);
+        assert_eq!(integer_sqrt(100), 10);
+        assert_eq!(integer_sqrt(9_000_000), 3000);
+    }
+
+    #[test]
+    fn test_integer_sqrt_non_perfect() {
+        // floor(sqrt(10)) = 3
+        assert_eq!(integer_sqrt(10), 3);
+        // floor(sqrt(99)) = 9
+        assert_eq!(integer_sqrt(99), 9);
+    }
+
+    // --- category_gamma_limit ---
+
+    #[test]
+    fn test_category_gamma_limit_retail() {
+        let limit = category_gamma_limit(0, &InvestorCategory::Retail);
+        assert_eq!(limit, 10_000_000_000);
+    }
+
+    #[test]
+    fn test_category_gamma_limit_qualified() {
+        let limit = category_gamma_limit(0, &InvestorCategory::Qualified);
+        assert_eq!(limit, 100_000_000_000);
+    }
+
+    #[test]
+    fn test_category_gamma_limit_institutional() {
+        let limit = category_gamma_limit(0, &InvestorCategory::Institutional);
+        assert_eq!(limit, 500_000_000_000);
+    }
+
+    #[test]
+    fn test_category_gamma_limit_config_lower_than_category() {
+        // config=5B < retail cap=10B → use config
+        let limit = category_gamma_limit(5_000_000_000, &InvestorCategory::Retail);
+        assert_eq!(limit, 5_000_000_000);
+    }
+
+    #[test]
+    fn test_category_gamma_limit_config_higher_than_category() {
+        // config=50B > retail cap=10B → use category cap
+        let limit = category_gamma_limit(50_000_000_000, &InvestorCategory::Retail);
+        assert_eq!(limit, 10_000_000_000);
+    }
+
+    // --- dynamic_gamma_margin_bps ---
+
+    #[test]
+    fn test_dynamic_gamma_margin_calm_market() {
+        // realized_vol = sqrt(9_000_000) = 3000, implied = 4000
+        // realized <= implied → base rate
+        let result = dynamic_gamma_margin_bps(100, 9_000_000, 4000);
+        assert_eq!(result, 100);
+    }
+
+    #[test]
+    fn test_dynamic_gamma_margin_volatile_market() {
+        // realized_vol = sqrt(16_000_000) = 4000, implied = 2000
+        // 4000 > 2000 → scaled = 100 * 4000 / 2000 = 200
+        let result = dynamic_gamma_margin_bps(100, 16_000_000, 2000);
+        assert_eq!(result, 200);
+    }
+
+    #[test]
+    fn test_dynamic_gamma_margin_capped_at_5x() {
+        // realized_vol = sqrt(100_000_000) ≈ 10000, implied = 1000
+        // scaled = 100 * 10000 / 1000 = 1000, but capped at 5 * 100 = 500
+        let result = dynamic_gamma_margin_bps(100, 100_000_000, 1000);
+        assert_eq!(result, 500);
+    }
+
+    #[test]
+    fn test_dynamic_gamma_margin_zero_implied() {
+        let result = dynamic_gamma_margin_bps(100, 9_000_000, 0);
+        assert_eq!(result, 100); // fallback to base
+    }
+
+    #[test]
+    fn test_dynamic_gamma_margin_zero_variance() {
+        let result = dynamic_gamma_margin_bps(100, 0, 3000);
+        assert_eq!(result, 100); // fallback to base
     }
 }

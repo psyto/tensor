@@ -28,6 +28,14 @@ pub struct SolverResult {
     pub reason: Option<String>,
 }
 
+/// A solver's bid on an intent.
+#[derive(Clone, Debug)]
+pub struct SolverBidParams {
+    pub solver_id: [u8; 32],
+    pub bid_price: u64,
+    pub max_slippage_bps: u16,
+}
+
 /// Configuration for margin simulation.
 #[derive(Clone, Debug)]
 pub struct MarginSimConfig {
@@ -36,6 +44,8 @@ pub struct MarginSimConfig {
     pub gamma_margin_bps: u64,
     pub vega_margin_bps: u64,
     pub credit_discount_bps: u64,
+    /// Max gamma notional per account (0 = unlimited)
+    pub max_account_gamma_notional: u64,
 }
 
 impl Default for MarginSimConfig {
@@ -46,6 +56,7 @@ impl Default for MarginSimConfig {
             gamma_margin_bps: 100,
             vega_margin_bps: 50,
             credit_discount_bps: 0,
+            max_account_gamma_notional: 0,
         }
     }
 }
@@ -160,6 +171,36 @@ pub fn simulate_margin_impact(
                 peak_margin, collateral
             ))
         },
+    }
+}
+
+/// Rank solver bids by best execution price.
+/// For buys (positive size): lowest price first.
+/// For sells (negative size): highest price first.
+pub fn rank_bids(bids: &mut [SolverBidParams], is_buy: bool) {
+    bids.sort_by(|a, b| {
+        if is_buy {
+            a.bid_price.cmp(&b.bid_price) // lowest first for buys
+        } else {
+            b.bid_price.cmp(&a.bid_price) // highest first for sells
+        }
+    });
+}
+
+/// Evaluate whether filling at the given bid price is profitable for the solver,
+/// accounting for gas costs and slippage.
+pub fn evaluate_bid_profitability(
+    bid_price: u64,
+    market_price: u64,
+    gas_cost_units: u64,
+    is_buy: bool,
+) -> bool {
+    if is_buy {
+        // Solver sells to buyer: bid_price must be >= market_price + gas cost
+        bid_price >= market_price.saturating_add(gas_cost_units)
+    } else {
+        // Solver buys from seller: bid_price must be <= market_price - gas cost
+        bid_price <= market_price.saturating_sub(gas_cost_units)
     }
 }
 
@@ -409,6 +450,50 @@ mod tests {
         // After both legs, net delta = 0, so final margin = 0
         // But peak margin was after first leg: |100| * $150 * 10% = $1500
         assert!(result.estimated_total_margin > 0); // peak is non-zero
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Bid ranking tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_rank_bids_buy_side() {
+        let mut bids = vec![
+            SolverBidParams { solver_id: [1; 32], bid_price: 150_000_000, max_slippage_bps: 50 },
+            SolverBidParams { solver_id: [2; 32], bid_price: 148_000_000, max_slippage_bps: 50 },
+            SolverBidParams { solver_id: [3; 32], bid_price: 152_000_000, max_slippage_bps: 50 },
+        ];
+        rank_bids(&mut bids, true); // buy: lowest first
+        assert_eq!(bids[0].bid_price, 148_000_000);
+        assert_eq!(bids[1].bid_price, 150_000_000);
+        assert_eq!(bids[2].bid_price, 152_000_000);
+    }
+
+    #[test]
+    fn test_rank_bids_sell_side() {
+        let mut bids = vec![
+            SolverBidParams { solver_id: [1; 32], bid_price: 150_000_000, max_slippage_bps: 50 },
+            SolverBidParams { solver_id: [2; 32], bid_price: 148_000_000, max_slippage_bps: 50 },
+            SolverBidParams { solver_id: [3; 32], bid_price: 152_000_000, max_slippage_bps: 50 },
+        ];
+        rank_bids(&mut bids, false); // sell: highest first
+        assert_eq!(bids[0].bid_price, 152_000_000);
+        assert_eq!(bids[1].bid_price, 150_000_000);
+        assert_eq!(bids[2].bid_price, 148_000_000);
+    }
+
+    #[test]
+    fn test_evaluate_bid_profitability_buy() {
+        // Seller perspective: bid_price should cover market + gas
+        assert!(evaluate_bid_profitability(155_000_000, 150_000_000, 1_000_000, true));
+        assert!(!evaluate_bid_profitability(149_000_000, 150_000_000, 1_000_000, true));
+    }
+
+    #[test]
+    fn test_evaluate_bid_profitability_sell() {
+        // Buyer perspective: bid_price should be below market - gas
+        assert!(evaluate_bid_profitability(145_000_000, 150_000_000, 1_000_000, false));
+        assert!(!evaluate_bid_profitability(150_000_000, 150_000_000, 1_000_000, false));
     }
 
     #[test]

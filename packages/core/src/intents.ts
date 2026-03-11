@@ -5,6 +5,7 @@ import type {
   ExecutionStep,
   SolverConstraints,
   SolverResult,
+  SolverBid,
 } from "./types";
 import type { CostEstimator } from "./adapter";
 import { solanaCostEstimator } from "./adapter";
@@ -212,4 +213,46 @@ export function solveIntent(
     estimated_margin_required: estimatedMargin,
     optimization_notes: notes,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  evaluateAuction                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Evaluate solver bids and select the winner.
+ * For buy intents: lowest bid price wins.
+ * For sell intents: highest bid price wins.
+ */
+export function evaluateAuction(
+  bids: SolverBid[],
+  side: "buy" | "sell",
+): SolverBid | null {
+  const activeBids = bids.filter((b) => b.is_active);
+  if (activeBids.length === 0) return null;
+
+  return activeBids.reduce((best, bid) => {
+    if (side === "buy") {
+      return bid.bid_price < best.bid_price ? bid : best;
+    } else {
+      return bid.bid_price > best.bid_price ? bid : best;
+    }
+  });
+}
+
+/**
+ * Rank solver bids by execution quality.
+ * Returns bids sorted best-to-worst for the given side.
+ */
+export function rankBids(
+  bids: SolverBid[],
+  side: "buy" | "sell",
+): SolverBid[] {
+  return [...bids]
+    .filter((b) => b.is_active)
+    .sort((a, b) =>
+      side === "buy"
+        ? a.bid_price - b.bid_price
+        : b.bid_price - a.bid_price,
+    );
 }

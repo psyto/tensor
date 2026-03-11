@@ -166,9 +166,94 @@ export interface OnChainMarginMarket {
   index: number;
   symbol: string;
   baseMint: PublicKey;
+  oracle: PublicKey;
+  varianceTracker: PublicKey;
+  spotEnabled: boolean;
+  perpEnabled: boolean;
+  optionsEnabled: boolean;
+  lendingEnabled: boolean;
+  initialMarginBps: bigint;
+  maintenanceRatioBps: bigint;
+  maxPositionSize: bigint;
   markPrice: bigint;
   impliedVolBps: bigint;
   fundingRateBps: bigint;
+  cumulativeFundingIndex: bigint;
+  lastFundingUpdate: bigint;
+  openInterestLong: bigint;
+  openInterestShort: bigint;
+  totalVolume: bigint;
   isActive: boolean;
+  aggregateGammaLong: bigint;
+  aggregateGammaShort: bigint;
+  volSurface: bigint[][];
+  volMoneynessNodes: bigint[];
+  volExpiryDays: number[];
+  volNodeCount: number;
+  volExpiryCount: number;
+  bump: number;
+}
+
+// ── Solver types ──
+
+export interface OnChainSolverEntry {
+  solver: PublicKey;
+  stake: bigint;
+  totalFills: bigint;
+  totalVolume: bigint;
+  slashCount: number;
+  isActive: boolean;
+  registeredAt: bigint;
+}
+
+export interface OnChainSolverRegistry {
+  authority: PublicKey;
+  solvers: OnChainSolverEntry[];
+  solverCount: number;
+  bump: number;
+}
+
+// ── Intent types ──
+
+export interface OnChainIntentLeg {
+  productType: ProductType;
+  marketIndex: number;
+  size: bigint;
+  limitPrice: bigint;
+  isActive: boolean;
+}
+
+export interface OnChainSolverBid {
+  solver: PublicKey;
+  bidPrice: bigint;
+  bidTimestamp: bigint;
+  isActive: boolean;
+}
+
+export enum IntentType {
+  Market = 0,
+  Limit = 1,
+  RFQ = 2,
+}
+
+export interface OnChainIntentAccount {
+  marginAccount: PublicKey;
+  intentId: bigint;
+  intentType: IntentType;
+  status: IntentStatus;
+  legs: OnChainIntentLeg[];
+  legCount: number;
+  filledLegs: number;
+  maxSlippageBps: number;
+  minFillRatioBps: number;
+  deadline: bigint;
+  maxTotalCost: bigint;
+  totalMarginUsed: bigint;
+  createdAt: bigint;
+  updatedAt: bigint;
+  bids: OnChainSolverBid[];
+  bidCount: number;
+  auctionEnd: bigint;
+  winningSolver: PublicKey;
   bump: number;
 }

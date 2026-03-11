@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use tensor_types::*;
+use crate::state::solver::{SolverBid, MAX_BIDS_PER_INTENT};
 
 pub const MAX_ACTIVE_INTENTS: u8 = 4;
 
@@ -22,6 +23,18 @@ pub struct IntentAccount {
     pub total_margin_used: u64,
     pub created_at: i64,
     pub updated_at: i64,
+
+    // --- Phase 4: Solver auction ---
+
+    /// Bids submitted by competing solvers
+    pub bids: [SolverBid; MAX_BIDS_PER_INTENT],
+    /// Number of bids received
+    pub bid_count: u8,
+    /// Timestamp when the auction window closes
+    pub auction_end: i64,
+    /// Winning solver selected after auction settles
+    pub winning_solver: Pubkey,
+
     pub bump: u8,
 }
 
@@ -61,6 +74,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert!(!intent.is_expired(500));
@@ -83,6 +100,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert!(intent.is_expired(1500));
@@ -105,6 +126,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert!(!intent.is_expired(999_999));
@@ -127,6 +152,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert_eq!(intent.fill_ratio_bps(), 0);
@@ -149,6 +178,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert_eq!(intent.fill_ratio_bps(), 5000); // 50%
@@ -171,6 +204,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert_eq!(intent.fill_ratio_bps(), 10000); // 100%
@@ -193,6 +230,10 @@ mod tests {
             total_margin_used: 0,
             created_at: 0,
             updated_at: 0,
+            bids: [SolverBid::default(); MAX_BIDS_PER_INTENT],
+            bid_count: 0,
+            auction_end: 0,
+            winning_solver: Pubkey::default(),
             bump: 0,
         };
         assert_eq!(intent.fill_ratio_bps(), 0);

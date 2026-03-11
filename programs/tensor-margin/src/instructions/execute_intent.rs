@@ -39,12 +39,36 @@ pub struct ExecuteIntent<'info> {
 
     /// Keeper/solver authority that executes the intent leg
     pub authority: Signer<'info>,
+
+    /// Optional: solver registry for auction-gated execution.
+    /// When present, authority must be the winning solver or a registered fallback.
+    #[account(
+        seeds = [SolverRegistry::SEED],
+        bump = solver_registry.bump,
+    )]
+    pub solver_registry: Option<Account<'info, SolverRegistry>>,
 }
 
 pub fn handler(ctx: Context<ExecuteIntent>, leg_index: u8, exec_price: u64) -> Result<()> {
     let clock = Clock::get()?;
     let config = &ctx.accounts.config;
     let intent = &mut ctx.accounts.intent_account;
+    let authority_key = ctx.accounts.authority.key();
+
+    // Solver authorization gate (Phase 4)
+    // If a SolverRegistry is provided, enforce auction-based solver selection.
+    if let Some(ref registry) = ctx.accounts.solver_registry {
+        require!(registry.is_registered(&authority_key), TensorError::SolverNotRegistered);
+
+        // If auction was configured and has a winning solver, only that solver can execute
+        if intent.auction_end > 0 && intent.winning_solver != Pubkey::default() {
+            require!(
+                authority_key == intent.winning_solver,
+                TensorError::UnauthorizedSolver
+            );
+        }
+        // If auction ended with no bids, any registered solver can fill (fallback)
+    }
 
     // Validate intent state
     require!(

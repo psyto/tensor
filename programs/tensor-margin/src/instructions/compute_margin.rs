@@ -34,10 +34,18 @@ pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, ComputeMargin<'info>>) 
     let config = &ctx.accounts.config;
     let account = &mut ctx.accounts.margin_account;
 
-    // Collect mark prices from remaining accounts (MarginMarket PDAs)
+    // Collect mark prices and vol surface from remaining accounts (MarginMarket PDAs)
     let mut mark_prices = vec![0u64; 256]; // indexed by market_index
     let mut primary_mark_price = 0u64;
     let mut primary_implied_vol = 0u64;
+    let primary_realized_var: u64 = 0; // for dynamic gamma margin
+
+    // Vol surface from primary market (used for per-position IV)
+    let mut vol_surface = [[0u64; 9]; 4];
+    let mut vol_moneyness_nodes = [0u64; 9];
+    let mut vol_expiry_days = [0u16; 4];
+    let mut vol_node_count: usize = 0;
+    let mut vol_expiry_count: usize = 0;
 
     for market_ai in ctx.remaining_accounts.iter() {
         if let Ok(market_data) = Account::<MarginMarket>::try_from(market_ai) {
@@ -47,6 +55,12 @@ pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, ComputeMargin<'info>>) 
                 if primary_mark_price == 0 {
                     primary_mark_price = market_data.mark_price;
                     primary_implied_vol = market_data.implied_vol_bps;
+                    // Capture vol surface from primary market
+                    vol_surface = market_data.vol_surface;
+                    vol_moneyness_nodes = market_data.vol_moneyness_nodes;
+                    vol_expiry_days = market_data.vol_expiry_days;
+                    vol_node_count = market_data.vol_node_count as usize;
+                    vol_expiry_count = market_data.vol_expiry_count as usize;
                 }
             }
         }
@@ -103,15 +117,51 @@ pub fn handler<'info>(ctx: Context<'_, '_, 'info, 'info, ComputeMargin<'info>>) 
         &mark_prices,
     );
 
-    // Compute margin requirements
-    let initial_margin = tensor_math::compute_initial_margin(
+    // Dynamic gamma margin: scale gamma_margin_bps by realized vol / baseline vol
+    // Baseline: implied_vol_bps as the "normal" level. If realized > implied, tighten margin.
+    let effective_gamma_bps = tensor_math::dynamic_gamma_margin_bps(
+        config.gamma_margin_bps,
+        primary_realized_var,
+        primary_implied_vol,
+    );
+
+    // Compute base margin (delta + gamma charges)
+    let base_margin = tensor_math::compute_initial_margin(
         &greeks,
         primary_mark_price,
         primary_implied_vol,
         config.initial_margin_bps,
-        config.gamma_margin_bps,
-        config.vega_margin_bps,
+        effective_gamma_bps,
+        0, // vega computed separately via surface
     );
+
+    // Compute vega charge using vol surface (or flat fallback)
+    let vega_charge = if vol_node_count > 0 {
+        let per_pos_vols = tensor_math::compute_per_position_vols(
+            &account.option_positions,
+            &vol_moneyness_nodes,
+            &vol_expiry_days,
+            &vol_surface,
+            vol_node_count,
+            vol_expiry_count,
+            primary_mark_price,
+            clock.unix_timestamp,
+            primary_implied_vol,
+        );
+        tensor_math::compute_vega_charge_surface(
+            &account.option_positions,
+            &per_pos_vols,
+            config.vega_margin_bps,
+            clock.unix_timestamp,
+        )
+    } else {
+        // Flat IV fallback: compute via standard formula
+        let abs_vega = if greeks.vega < 0 { -greeks.vega } else { greeks.vega } as u128;
+        (abs_vega * primary_implied_vol as u128 * config.vega_margin_bps as u128
+            / (10_000u128 * 10_000u128)) as u64
+    };
+
+    let initial_margin = base_margin.saturating_add(vega_charge);
 
     let maint_margin = tensor_math::compute_maintenance_margin(
         initial_margin,

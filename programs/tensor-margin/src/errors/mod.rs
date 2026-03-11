@@ -115,4 +115,39 @@ pub enum TensorError {
 
     #[msg("Max cost exceeded")]
     MaxCostExceeded,
+
+    // Phase 4: Risk limits
+    #[msg("Account gamma exposure exceeds limit")]
+    GammaLimitExceeded,
+
+    #[msg("Market aggregate gamma exposure exceeds limit")]
+    MarketGammaLimitExceeded,
+
+    // Phase 4: Solver decentralization
+    #[msg("Solver not registered")]
+    SolverNotRegistered,
+
+    #[msg("Solver is not active")]
+    SolverNotActive,
+
+    #[msg("Unauthorized solver for this intent")]
+    UnauthorizedSolver,
+
+    #[msg("Auction still open")]
+    AuctionStillOpen,
+
+    #[msg("Auction has ended")]
+    AuctionEnded,
+
+    #[msg("Insufficient solver stake")]
+    InsufficientSolverStake,
+
+    #[msg("Max solver count reached")]
+    MaxSolverCount,
+
+    #[msg("Solver not found in registry")]
+    SolverNotFound,
+
+    #[msg("Solver is still active")]
+    SolverStillActive,
 }

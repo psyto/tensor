@@ -40,6 +40,7 @@ pub struct OpenOption<'info> {
     pub margin_account: Account<'info, MarginAccount>,
 
     #[account(
+        mut,
         seeds = [MarginMarket::SEED, &market.index.to_le_bytes()],
         bump = market.bump,
     )]
@@ -138,6 +139,32 @@ pub fn handler(ctx: Context<OpenOption>, market_index: u16, params: OpenOptionPa
         &mark_prices,
     );
     require!(equity >= initial_margin as i64, TensorError::InsufficientMargin);
+
+    // Check gamma concentration limits (uses the tighter of global and category limit)
+    let effective_gamma_limit = tensor_math::category_gamma_limit(
+        config.max_account_gamma_notional,
+        &account.investor_category,
+    );
+    require!(
+        tensor_math::check_gamma_limits(&greeks, market.mark_price, effective_gamma_limit),
+        TensorError::GammaLimitExceeded
+    );
+
+    // Update market aggregate gamma tracking
+    let market = &mut ctx.accounts.market;
+    let old_gamma = greeks.gamma - (account.option_positions[slot_idx].gamma());
+    let new_gamma = greeks.gamma;
+    let gamma_delta = new_gamma - old_gamma;
+    if gamma_delta > 0 {
+        market.aggregate_gamma_long = market.aggregate_gamma_long.saturating_add(gamma_delta);
+    } else if gamma_delta < 0 {
+        market.aggregate_gamma_short = market.aggregate_gamma_short.saturating_add(gamma_delta);
+    }
+    let net_market_gamma = market.aggregate_gamma_long + market.aggregate_gamma_short;
+    require!(
+        tensor_math::check_market_gamma_limits(net_market_gamma, market.mark_price, config.max_market_gamma_notional),
+        TensorError::MarketGammaLimitExceeded
+    );
 
     // Cache
     account.greeks = greeks;

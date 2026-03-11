@@ -44,3 +44,24 @@ export function findIntentAccountPDA(
     programId,
   );
 }
+
+export function findMarginMarketPDAByIndex(
+  index: number,
+  programId: PublicKey = TENSOR_PROGRAM_ID,
+): [PublicKey, number] {
+  const indexBuf = Buffer.alloc(2);
+  indexBuf.writeUInt16LE(index);
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("margin_market"), indexBuf],
+    programId,
+  );
+}
+
+export function findSolverRegistryPDA(
+  programId: PublicKey = TENSOR_PROGRAM_ID,
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("solver_registry")],
+    programId,
+  );
+}
