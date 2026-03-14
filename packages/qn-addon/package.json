@@ -1,8 +1,12 @@
 {
-  "name": "@tensor/qn-addon",
-  "version": "0.1.0",
+  "name": "@fabrknt/tensor-qn-addon",
+  "version": "1.0.0",
   "description": "Fabrknt Margin Engine — QuickNode Marketplace add-on for portfolio margining and risk management",
   "main": "dist/server.js",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
@@ -10,7 +14,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@tensor/core": "workspace:*",
+    "@fabrknt/tensor-core": "workspace:*",
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "express-rate-limit": "^7.1.0",

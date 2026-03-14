@@ -9,7 +9,7 @@
     "email": "support@fabrknt.com",
     "url": "https://fabrknt.com/support"
   },
-  "repository": "https://github.com/psyto/tensor",
+  "repository": "https://github.com/fabrknt/tensor",
   "chains": [
     {
       "id": "solana",

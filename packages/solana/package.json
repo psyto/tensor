@@ -1,9 +1,13 @@
 {
-  "name": "@tensor/solana",
-  "version": "0.1.0",
+  "name": "@fabrknt/tensor-solana",
+  "version": "1.0.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
     "test": "vitest run",
@@ -14,7 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@tensor/core": "workspace:*",
+    "@fabrknt/tensor-core": "workspace:*",
     "@solana/web3.js": "^1.95.0"
   },
   "devDependencies": {

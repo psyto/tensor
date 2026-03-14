@@ -20,7 +20,7 @@ cluster = "Localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "pnpm --filter @tensor/tests test"
+test = "pnpm --filter @fabrknt/tensor-tests test"
 
 [test]
 startup_wait = 5000

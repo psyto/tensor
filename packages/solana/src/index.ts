@@ -77,4 +77,4 @@ export {
   type TradingIntent,
   type SolverResult,
   type SolverConstraints,
-} from "@tensor/core";
+} from "@fabrknt/tensor-core";

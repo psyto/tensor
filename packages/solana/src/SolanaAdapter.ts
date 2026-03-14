@@ -1,5 +1,5 @@
 import { Connection, PublicKey } from "@solana/web3.js";
-import type { ChainAdapter, Chain, Position, TradingIntent } from "@tensor/core";
+import type { ChainAdapter, Chain, Position, TradingIntent } from "@fabrknt/tensor-core";
 import { TENSOR_PROGRAM_ID, findMarginAccountPDA } from "./pda.js";
 import { PRECISION, type OnChainMarginAccount } from "./accounts.js";
 import { decodeMarginAccount, decodeMarginMarket } from "./decoder.js";

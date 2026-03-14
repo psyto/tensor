@@ -4,7 +4,7 @@ import {
   calculateHealth,
   deltaNet,
   type Position,
-} from "@tensor/core";
+} from "@fabrknt/tensor-core";
 
 export const marginRoutes: IRouter = Router();
 

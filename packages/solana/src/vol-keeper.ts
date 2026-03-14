@@ -5,7 +5,7 @@ import {
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
-import { fitVolSurfaceFromOracle, buildVolSurface, volSurfaceToOnChain } from "@tensor/core";
+import { fitVolSurfaceFromOracle, buildVolSurface, volSurfaceToOnChain } from "@fabrknt/tensor-core";
 import { TENSOR_PROGRAM_ID, findMarginMarketPDAByIndex, findMarginConfigPDA } from "./pda.js";
 import { updateVolSurfaceIx } from "./ix.js";
 import { decodeMarginMarket } from "./decoder.js";

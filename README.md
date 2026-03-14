@@ -66,7 +66,7 @@ The Anchor program exposes 27 instructions:
 
 ## Keeper Bots
 
-The `@tensor/solana` package includes three runnable keeper services:
+The `@fabrknt/tensor-solana` package includes three runnable keeper services:
 
 ### Crank Bot
 
@@ -161,7 +161,7 @@ cargo test
 pnpm test
 ```
 
-125 TypeScript tests across `@tensor/core` (87) and `@tensor/solana` (38) covering:
+125 TypeScript tests across `@fabrknt/tensor-core` (87) and `@fabrknt/tensor-solana` (38) covering:
 
 - Black-Scholes Greeks (delta, gamma, vega, theta)
 - Portfolio aggregation and put-call parity
@@ -196,7 +196,7 @@ Types use `borsh` serialization and `[u8; 32]` for address fields instead of `Pu
 
 ## TypeScript Packages
 
-### @tensor/core
+### @fabrknt/tensor-core
 
 Chain-agnostic math and types. No Solana dependency.
 
@@ -213,7 +213,7 @@ import {
   findSettleableAuctions,
   solveIntent,
   evmCostEstimator,
-} from "@tensor/core";
+} from "@fabrknt/tensor-core";
 ```
 
 Key modules:
@@ -223,7 +223,7 @@ Key modules:
 - **vol-surface** — Vol surface generation from ATM IV + skew/term multipliers
 - **solver-client** — Solver bid evaluation, auction processing, crank bot logic
 
-### @tensor/solana
+### @fabrknt/tensor-solana
 
 Solana adapter, borsh decoders, instruction builders, and keeper bots.
 
@@ -254,7 +254,7 @@ import {
   // Vol surface
   buildVolSurfaceParams,
   buildVolSurfaceFromAtmVol,
-} from "@tensor/solana";
+} from "@fabrknt/tensor-solana";
 ```
 
 ## QuickNode Add-on

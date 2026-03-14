@@ -4,7 +4,7 @@ import {
   solveIntent,
   type TradingIntent,
   type SolverConstraints,
-} from "@tensor/core";
+} from "@fabrknt/tensor-core";
 
 export const intentRoutes: IRouter = Router();
 

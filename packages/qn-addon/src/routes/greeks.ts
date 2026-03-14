@@ -3,7 +3,7 @@ import {
   computeGreeks,
   aggregatePortfolioGreeks,
   type OptionPosition,
-} from "@tensor/core";
+} from "@fabrknt/tensor-core";
 
 export const greeksRoutes: IRouter = Router();
 
