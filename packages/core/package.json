@@ -1,6 +1,6 @@
 {
   "name": "@fabrknt/tensor-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Core math and logic for Tensor protocol — margin, Greeks, intent solving",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
