@@ -275,4 +275,4 @@ The `packages/qn-addon` package provides a QuickNode Marketplace add-on (slug: `
 
 ## License
 
-BUSL-1.1
+MIT
