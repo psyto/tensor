@@ -1,5 +1,8 @@
 # @fabrknt/tensor-core
 
+[![npm version](https://img.shields.io/npm/v/@fabrknt/tensor-core.svg)](https://www.npmjs.com/package/@fabrknt/tensor-core)
+[![npm downloads](https://img.shields.io/npm/dm/@fabrknt/tensor-core.svg)](https://www.npmjs.com/package/@fabrknt/tensor-core)
+
 Chain-agnostic math, types, and solver client for Tensor -- unified margin engine with Greeks-aware portfolio margining across perpetuals, options, spot, and lending.
 
 Not every DeFi protocol needs TradFi compliance -- but if yours does, you shouldn't have to rebuild from scratch. Fabrknt plugs into your existing protocol with composable SDKs and APIs. No permissioned forks, no separate deployments.
